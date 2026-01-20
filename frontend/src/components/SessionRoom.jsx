@@ -1,0 +1,393 @@
+// frontend/src/components/SessionRoom.jsx
+import React, { useState, useEffect, useRef } from 'react';
+import { socket } from '../socket';
+
+const TIP_OPTIONS = [100, 300, 500];
+const SessionRoom = ({ sessionInfo, onLeave }) => {
+  const [input, setInput] = useState('');
+  const [messages, setMessages] = useState([]);
+  const [tipEffect, setTipEffect] = useState(false);
+
+  const [tipOpen, setTipOpen] = useState(false);
+  const [tipLoading, setTipLoading] = useState(false);
+
+  const cheersSoundRef = useRef(null);
+  const leaveSoundRef = useRef(null);
+  const tipTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (tipTimerRef.current) window.clearTimeout(tipTimerRef.current);
+    };
+  }, []);
+
+
+  const addMessage = (from, text) => {
+    setMessages((prev) => [...prev, { id: prev.length + 1, from, text }]);
+  };
+
+  // 🍸 乾杯音
+  useEffect(() => {
+    const a = new Audio('/kanpai.mp3');
+    a.volume = 0.6;
+    cheersSoundRef.current = a;
+    return () => {
+      a.pause();
+      a.src = '';
+      cheersSoundRef.current = null;
+    };
+  }, []);
+
+  // 🚪 退出音
+  useEffect(() => {
+    const a = new Audio('/open.mp3');
+    a.volume = 0.55;
+    leaveSoundRef.current = a;
+    return () => {
+      a.pause();
+      a.src = '';
+      leaveSoundRef.current = null;
+    };
+  }, []);
+
+  // 入店時のあいさつ
+  useEffect(() => {
+    const greeting =
+      sessionInfo?.mood === 'relax'
+        ? '癒やされたい'
+        : sessionInfo?.mood === 'listen'
+        ? '話を聞いてほしい'
+        : sessionInfo?.mood === 'advise'
+        ? '悩みを相談したい'
+        : 'お話';
+
+    addMessage('mama', `いらっしゃい。今日は「${greeting}」気分なのね。ゆっくりしてらしてね。`);
+    // silent-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ママからのチャットメッセージ
+  useEffect(() => {
+    const handler = ({ from, text }) => {
+      if (from === 'mama') addMessage('mama', text);
+    };
+    socket.on('chat.message', handler);
+    return () => socket.off('chat.message', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 1分前アラート
+  useEffect(() => {
+    const onWarning = () => addMessage('system', '⏰あと1分でセッションが終了しちゃう...。');
+    socket.on('session.warning', onWarning);
+    return () => socket.off('session.warning', onWarning);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tip = params.get('tip');
+
+    if (tip === 'success') {
+      addMessage('mama', '嬉しいわ！ほんとにありがとう。');
+      setTipEffect(true);
+
+      setTimeout(() => setTipEffect(false), 1200);
+
+      // URLを元に戻す（再読込対策）
+      window.history.replaceState({}, '', '/session');
+    }
+
+    if (tip === 'cancel') {
+      window.history.replaceState({}, '', '/session');
+    }
+  }, []);
+
+  const handleSend = () => {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    addMessage('user', trimmed);
+    setInput('');
+    socket.emit('guest.message', { text: trimmed });
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  const handleCheers = () => {
+    if (cheersSoundRef.current) {
+      try {
+        cheersSoundRef.current.currentTime = 0;
+        cheersSoundRef.current.play();
+      } catch (e) {
+        console.warn('cheers sound play error', e);
+      }
+    }
+    const text = '🍸 乾杯！';
+    addMessage('user', text);
+    socket.emit('guest.message', { text });
+  };
+
+  const handleConsult = () => {
+    const text = '💬 ちょっと相談したいことがあるんだ。';
+    addMessage('user', text);
+    socket.emit('guest.message', { text });
+  };
+
+  const handleTip = () => {
+    // まずは金額選択を開く
+    setTipOpen(true);
+
+    // （任意）チャットログに出したい場合
+    // addMessage('user', '💸 チップをはずむ（選択中）');
+  };
+
+  const startTipPayment = async (amount) => {
+    try {
+      setTipLoading(true);
+
+      const text = `💸 チップ ¥${amount} をはずむ。`;
+      addMessage('user', text);
+      socket.emit('guest.message', { text });
+
+      setTipEffect(true);
+      socket.emit('guest.tip', { amount });
+
+      if (tipTimerRef.current) window.clearTimeout(tipTimerRef.current);
+      tipTimerRef.current = window.setTimeout(() => setTipEffect(false), 900);
+
+      const res = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data?.url) throw new Error('failed to create session');
+
+      // ★ ここだけ変更
+      window.open(data.url, '_blank', 'noopener,noreferrer');
+
+    } catch (e) {
+      console.error(e);
+      addMessage('system', '決済の開始に失敗しました…');
+    } finally {
+      setTipLoading(false);
+      setTipOpen(false);
+    }
+  };
+
+  return (
+    <div className="relative min-h-screen overflow-hidden text-snack-text" style={{ backgroundColor: '#2a2623' }}>
+      {/* 背景：木目（任意。無ければこのdivだけ消してOK） */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundImage: "url('/assets/snack-wood.jpg')",
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          opacity: 0.1,
+        }}
+        aria-hidden="true"
+      />
+      {/* 背景：落ち着かせるフィルタ */}
+      <div className="pointer-events-none absolute inset-0 bg-black/30" aria-hidden="true" />
+      {/* 背景：ネオンにじみ（直色で確実） */}
+      <div
+        className="pointer-events-none absolute -top-24 -left-24 w-96 h-96 rounded-full blur-[140px]"
+        style={{ background: 'rgba(255,90,120,0.18)' }}
+        aria-hidden="true"
+      />
+      <div
+        className="pointer-events-none absolute top-1/3 -right-28 w-96 h-96 rounded-full blur-[140px]"
+        style={{ background: 'rgba(80,160,255,0.14)' }}
+        aria-hidden="true"
+      />
+      {/* 背景：ビネット */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background: 'linear-gradient(to bottom, rgba(90,60,40,0.06), rgba(0,0,0,0) 45%, rgba(0,0,0,0.38))',
+        }}
+        aria-hidden="true"
+      />
+
+      {/* ===== UI（既存） ===== */}
+      <div className={'relative z-10 flex flex-col min-h-screen overflow-hidden ' + (tipEffect ? 'shadow-neon-pink' : '')}>
+        {/* 💸 コインアニメーション */}
+        {tipEffect && (
+          <div className="pointer-events-none absolute inset-0 overflow-hidden">
+            <div className="absolute bottom-4 left-1/3 w-6 h-6 rounded-full border border-yellow-300 bg-yellow-200/90 animate-coin" />
+            <div className="absolute bottom-6 left-1/2 w-5 h-5 rounded-full border border-yellow-300 bg-yellow-200/80 animate-coin delay-150" />
+            <div className="absolute bottom-3 left-2/3 w-4 h-4 rounded-full border border-yellow-300 bg-yellow-200/70 animate-coin delay-300" />
+          </div>
+        )}
+
+        {/* ママの表示エリア */}
+        <div className="h-2/5 relative">
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-snack-bg" />
+          <img
+            src="/assets/mama-stylized.jpg"
+            alt="Mama"
+            className="w-full h-full object-cover blur-[2px] contrast-125"
+          />
+          <div className="absolute bottom-4 left-4">
+            <span className="bg-snack-neon-pink text-white text-xs px-2 py-1 rounded">ON AIR</span>
+          </div>
+        </div>
+
+        {/* メッセージログ */}
+        <div className="flex-grow p-4 overflow-y-auto space-y-4 bg-black/30 backdrop-blur-lg border border-white/10 rounded-2xl backdrop-blur-md">
+          <div className="text-center text-xs text-gray-500 my-2">—— ママが入店しました ——</div>
+
+          {messages.map((m) => {
+            if (m.from === 'system') {
+              return (
+                <div key={m.id} className="flex justify-center">
+                  <span className="text-xs text-gray-400">{m.text}</span>
+                </div>
+              );
+            }
+
+            const isMama = m.from === 'mama';
+            return (
+              <div key={m.id} className={`flex ${isMama ? 'justify-start' : 'justify-end'}`}>
+                <div
+                  className={`bubble-in max-w-[80%] px-4 py-3 rounded-2xl text-[15px] leading-relaxed ${
+                    isMama
+                      ? 'bg-snack-brown text-snack-text rounded-tl-none'
+                      : 'bg-[#f1e6d6] text-[#2b1c12] shadow-[0_4px_14px_rgba(0,0,0,0.25)] rounded-tr-none'
+                  }`}
+                >
+                  {m.text}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* 入力エリア */}
+        <footer className="p-4 bg-snack-bg border-t border-snack-brown">
+          {/* クイックアクション */}
+          <div className="flex gap-2 mb-3">
+            <button
+              type="button"
+              onClick={handleCheers}
+              className="flex-1 bg-yellow-900/40 border border-yellow-600 text-yellow-200 py-2 rounded-full text-sm"
+            >
+              🍸 乾杯
+            </button>
+            <button
+              type="button"
+              onClick={handleConsult}
+              className="flex-1 bg-snack-neon-blue/20 border border-snack-neon-blue text-snack-neon-blue py-2 rounded-full text-sm"
+            >
+              💬 相談
+            </button>
+            <button
+              type="button"
+              onClick={handleTip}
+              className="flex-1 bg-snack-neon-pink/10 border border-snack-neon-pink text-snack-neon-pink py-2 rounded-full text-sm"
+            >
+              💸 チップ
+            </button>
+          </div>
+
+          {/* もう帰るボタン */}
+          <div className="flex justify-end mb-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (leaveSoundRef.current) {
+                  try {
+                    leaveSoundRef.current.currentTime = 0;
+                    leaveSoundRef.current.play();
+                  } catch (e) {
+                    console.warn('leave sound play error', e);
+                  }
+                }
+                window.setTimeout(() => onLeave(), 900);
+              }}
+              className="px-3 py-1 rounded-full border border-gray-600 text-[11px] text-gray-300 hover:bg-gray-800 transition-colors"
+            >
+              もう帰る
+            </button>
+          </div>
+
+          {/* 入力 + 送信 */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="メッセージを入力..."
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              className="flex-grow bg-black/50 border border-snack-brown rounded-full px-4 py-2 text-sm focus:outline-none focus:border-snack-neon-pink"
+            />
+            <button
+              type="button"
+              onClick={handleSend}
+              className="bg-snack-neon-pink p-2 rounded-full w-10 h-10 flex items-center justify-center shadow-neon-pink active:scale-95 transition-transform"
+            >
+              ▶
+            </button>
+          </div>
+        </footer>
+      </div>
+
+      {tipOpen && (
+        <div className="absolute inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#1c1715]/95 p-4 shadow-xl">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm text-snack-text">チップの金額を選んでね</div>
+              <button
+                type="button"
+                onClick={() => (tipLoading ? null : setTipOpen(false))}
+                className="text-xs text-gray-300 px-2 py-1 rounded-full border border-gray-600"
+              >
+                閉じる
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              {TIP_OPTIONS.map((a) => (
+                <button
+                  key={a}
+                  type="button"
+                  disabled={tipLoading}
+                  onClick={() => startTipPayment(a)}
+                  className="py-3 rounded-xl border border-snack-neon-pink/40 bg-snack-neon-pink/10 text-snack-neon-pink text-sm active:scale-95 transition-transform disabled:opacity-60"
+                >
+                  ¥{a}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-3 text-[11px] text-gray-400">
+              ※ お支払い画面（PayPay等）に移動します
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ 背景のネオンを「上に薄く」かける（必ず見える） */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          zIndex: 9999,
+          background:
+            'linear-gradient(to bottom, rgba(60,30,20,0.55), rgba(10,8,10,0.85)),' +
+            'radial-gradient(circle at 20% 8%, rgba(255,120,120,0.18), transparent 42%),' +
+            'radial-gradient(circle at 80% 28%, rgba(120,180,255,0.12), transparent 45%)',
+          mixBlendMode: 'screen',
+        }}
+      />
+
+    </div>
+  );
+};
+
+export default SessionRoom;
