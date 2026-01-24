@@ -58,21 +58,58 @@ const TopSelection = ({ onEnter }) => {
   };
 
   return (
-    <div className="p-6 flex flex-col h-full animate-fadeIn bg-snack-bg text-snack-text">
-      <header className="text-center py-8">
-        <div className="inline-block relative">
-          <img
-            src="/assets/logo.png"
-            alt="スナック蒸発"
-            className="w-[400px] mx-auto rounded-md drop-shadow-[0_0_12px_rgba(255,90,120,.35)]"
-          />
-          <div className="absolute inset-0 rounded-md blur-xl opacity-40 bg-snack-neon-pink/30 -z-10" />
-        </div>
+    <div className="relative h-full min-h-screen overflow-hidden text-snack-text">
+      {/* 背景画像 */}
+      <div
+        className="absolute inset-0"
+        style={{
+          backgroundImage: "url('/assets/bg-front.webp')",
+          backgroundSize: 'contain',          // ← 縮小して全体表示
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat',
+          backgroundColor: '#120d12',          // ← 余白用（暗め）
+        }}
+        aria-hidden="true"
+      />
 
-        <p className="mt-4 text-[13px] text-snack-text-dim tracking-[0.3em] uppercase italic">
-          VIRTUAL SNACK – NO TRACE
-        </p>
-      </header>
+      {/* 暗幕（可読性UP） */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            'linear-gradient(to bottom, rgba(0,0,0,0.55), rgba(0,0,0,0.80))',
+        }}
+        aria-hidden="true"
+      />
+
+      {/* 任意：ネオンにじみ（雰囲気） */}
+      <div
+        className="pointer-events-none absolute -top-24 -left-24 w-[28rem] h-[28rem] rounded-full blur-[140px]"
+        style={{ background: 'rgba(255,90,120,0.20)' }}
+        aria-hidden="true"
+      />
+      <div
+        className="pointer-events-none absolute top-1/3 -right-28 w-[28rem] h-[28rem] rounded-full blur-[140px]"
+        style={{ background: 'rgba(80,160,255,0.16)' }}
+        aria-hidden="true"
+      />
+
+      {/* UI本体 */}
+      <div className="relative z-10 p-6 flex flex-col h-full animate-fadeIn">
+        <header className="text-center py-8">
+          <div className="inline-block relative">
+            <img
+              src="/assets/logo.png"
+              alt="スナック蒸発"
+              className="w-[400px] mx-auto rounded-md drop-shadow-[0_0_12px_rgba(255,90,120,.35)]"
+            />
+            <div className="absolute inset-0 rounded-md blur-xl opacity-40 bg-snack-neon-pink/30 -z-10" />
+          </div>
+
+          <p className="mt-4 text-[13px] text-snack-text-dim tracking-[0.3em] uppercase italic">
+            VIRTUAL SNACK – NO TRACE
+          </p>
+        </header>
 
       <main className="flex-grow space-y-8">
         <section>
@@ -155,6 +192,7 @@ const TopSelection = ({ onEnter }) => {
           <span className="relative z-10 drop-shadow-[0_1px_0_rgba(0,0,0,0.65)]">蒸発する</span>
         </button>
       </main>
+    </div>
     </div>
   );
 };

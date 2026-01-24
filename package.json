@@ -1,0 +1,9 @@
+{
+  "name": "snack-no-trace",
+  "private": true,
+  "workspaces": ["frontend", "backend"],
+  "scripts": {
+    "dev": "npm -w backend run dev & npm -w frontend run dev",
+    "dev:win": "start \"\" cmd /c \"npm -w backend run dev\" & start \"\" cmd /c \"npm -w frontend run dev\""
+  }
+}
