@@ -171,7 +171,6 @@ const modeLabel =
                 hover:opacity-90 transition
               "
             >
-              Zoom を開く
             </button>
 
             <p className="mt-2 text-[10px] text-gray-400">
