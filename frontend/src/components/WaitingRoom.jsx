@@ -1,14 +1,6 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { socket } from '../socket';
-
-const ZOOM_URL =
-  import.meta.env.VITE_ZOOM_URL || 'https://zoom.us/j/your-meeting-id';
+import React, { useRef } from 'react';
 
 const WaitingRoom = ({ sessionInfo, onCancel }) => {
-  const [queueInfo, setQueueInfo] = useState(null);
-  const [copied, setCopied] = useState(false);
-
-  // ✅ useRef はコンポーネント内
   const evapSoundRef = useRef(null);
 
   const playEvapSoft = () => {
@@ -30,170 +22,170 @@ const WaitingRoom = ({ sessionInfo, onCancel }) => {
     }
   };
 
-  useEffect(() => {
-    const handleQueuePosition = (payload) => setQueueInfo(payload);
+  const moodLabel =
+    sessionInfo?.mood === 'relax'
+      ? '癒されたい'
+      : sessionInfo?.mood === 'listen'
+      ? '話を聞いてほしい'
+      : sessionInfo?.mood === 'advise'
+      ? '悩みを相談したい'
+      : 'おまかせ';
 
-    socket.on('queue.position', handleQueuePosition);
-    return () => socket.off('queue.position', handleQueuePosition);
-  }, []);
-
-  const handleCopyZoomUrl = async () => {
-    try {
-      await navigator.clipboard.writeText(ZOOM_URL);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch (e) {
-      console.warn('copy zoom url failed', e);
-    }
-  };
-
-const moodLabel =
-  sessionInfo.mood === 'relax'
-    ? ' 癒されたい'
-    : sessionInfo.mood === 'listen'
-    ? ' 話を聞いてほしい'
-    : sessionInfo.mood === 'advise'
-    ? ' 悩みを相談したい'
-    : 'おまかせ';
-
-const modeLabel =
-  sessionInfo.mode === 'chat' ? '映像付きチャット（Zoom）' : 'テキストのみ';
+  const modeLabel =
+    sessionInfo?.mode === 'voice' ? '音声のみ' : 'テキストのみ';
 
   return (
-    <div className="min-h-screen flex flex-col bg-snack-bg text-snack-text animate-fadeIn">
-      {/* ヘッダー */}
-      <header className="text-center py-8 border-b border-snack-brown/60 bg-black/30">
-        <div className="inline-block relative">
-          <img
-                      src="/assets/logo.png"
-                      alt="スナック蒸発"
-                      className="
-                        w-[300px] mx-auto rounded-md
-                        drop-shadow-[0_0_12px_rgba(255,90,120,.35)]
-                      "
-                    />
-          <div className="absolute inset-0 rounded-md blur-xl opacity-40 bg-snack-neon-pink/20 -z-10" />
-        </div>
-        <p className="mt-2 text-[13px] text-snack-neon-blue tracking-[0.25em] uppercase">
-          No Trace – Waiting Lounge
-        </p>
-      </header>
+    <div
+      className="
+        relative min-h-[100dvh] overflow-hidden
+        text-snack-text animate-fadeIn
+        bg-gradient-to-b from-[#1A2F55] via-[#23457A] to-[#1A2F55]
+        pb-[max(16px,env(safe-area-inset-bottom))]
+        pt-[max(10px,env(safe-area-inset-top))]
+      "
+    >
+      {/* うっすら霧（ネイビーで上品に） */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            'radial-gradient(1000px 520px at 50% 20%, rgba(90,140,200,0.22), transparent 62%),' +
+            'radial-gradient(900px 520px at 50% 60%, rgba(80,130,190,0.20), transparent 65%)',
+        }}
+        aria-hidden="true"
+      />
 
-      {/* メイン */}
-      <main className="flex-1 px-6 py-6 flex flex-col gap-6">
-        {/* ママ準備中 */}
-        <section className="bg-black/40 border border-snack-brown/60 rounded-2xl p-4 shadow-inner">
-          <p className="text-xs text-gray-400 mb-1">ステータス</p>
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <span className="flex h-3 w-3">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-snack-neon-pink opacity-50" />
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-snack-neon-pink" />
-              </span>
-            </div>
-            <div>
-              <p className="text-sm font-semibold">
-                ママがグラスを拭きながら、あなたを迎える準備をしています…
-              </p>
-              <p className="text-xs text-gray-400 mt-1">
-                画面はこのままで大丈夫です。そのままお待ちください。
-              </p>
+      {/* 本体 */}
+      <div className="relative z-10 min-h-[100dvh] flex flex-col">
+        {/* ヘッダー（看板っぽく） */}
+        <header className="text-center py-7 border-b border-[rgba(160,200,255,0.25)] bg-[rgba(26,47,85,0.35)] backdrop-blur-[1px]">
+          <div className="inline-block relative">
+            <div
+              className="
+                relative
+                rounded-xl
+                px-3 py-3
+                bg-[rgba(30,55,100,0.75)]
+                border border-[rgba(160,200,255,0.45)]
+                shadow-[0_10px_30px_rgba(0,0,0,0.35)]
+              "
+            >
+              <img
+                src="/assets/logo.png"
+                alt="スナック蒸発"
+                className="
+                  w-[260px] sm:w-[300px] mx-auto
+                  rounded-md
+                  drop-shadow-[0_2px_6px_rgba(0,0,0,0.35)]
+                "
+              />
+              <div
+                className="
+                  pointer-events-none absolute inset-1
+                  rounded-lg
+                  border border-[rgba(180,215,255,0.35)]
+                "
+              />
             </div>
           </div>
-        </section>
 
-        {/* オーダー内容 */}
-        <section className="bg-snack-brown/20 border border-snack-brown/70 rounded-2xl p-4 text-sm">
-          <p className="text-xs text-gray-300 mb-2">今日のオーダー内容</p>
-          <div className="space-y-1">
-            <div className="flex justify-between">
-              <span className="text-gray-400">気分</span>
-              <span className="font-semibold">{moodLabel}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-400">モード</span>
-              <span className="font-semibold">{modeLabel}</span>
-            </div>
-          </div>
-        </section>
+          <p
+            className="
+              mt-4 text-[12px]
+              text-[rgba(200,220,255,0.85)]
+              tracking-[0.28em] uppercase
+              drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]
+            "
+          >
+            NO TRACE – WAITING LOUNGE
+          </p>
+        </header>
 
-        {/* 待ち人数 */}
-        <section className="bg-black/40 border border-snack-brown/40 rounded-2xl p-4 text-sm">
-          <p className="text-xs text-gray-300 mb-2">待ち状況</p>
-          {queueInfo ? (
-            <div className="flex items-center justify-between">
+        {/* メイン */}
+        <main className="flex-1 px-6 py-6 flex flex-col gap-6">
+          {/* ママ準備中 */}
+          <section className="bg-[rgba(26,47,85,0.55)] border border-[rgba(160,200,255,0.35)] rounded-2xl p-4 backdrop-blur-[1px]">
+            <p className="text-xs text-[rgba(200,220,255,0.75)] mb-1">
+              ステータス
+            </p>
+
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <span className="flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[rgba(120,170,240,0.95)] opacity-25" />
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-[rgba(120,170,240,0.95)]" />
+                </span>
+              </div>
+
               <div>
-                <p className="text-lg font-mono">
-                  あと{' '}
-                  <span className="text-snack-neon-pink font-bold">
-                    {queueInfo.position}
-                  </span>{' '}
-                  番目
+                <p className="text-sm font-semibold text-white/90">
+                  ママがグラスを拭きながら、あなたを迎える準備をしています…
                 </p>
-                <p className="text-xs text-gray-400 mt-1">
-                  （現在 {queueInfo.size} 人が待機中）
+                <p className="text-xs text-white/60 mt-1">
+                  画面はこのままで大丈夫です。そのままお待ちください。
                 </p>
-              </div>
-              <div className="text-right text-[10px] text-gray-500">
-                ※実際の待ち時間は会話の長さによって前後します
               </div>
             </div>
-          ) : (
-            <p className="text-xs text-gray-500">
-              待ち状況を取得しています…
+          </section>
+
+          {/* オーダー内容 */}
+          <section className="bg-[rgba(26,47,85,0.55)] border border-[rgba(160,200,255,0.35)] rounded-2xl p-4 text-sm backdrop-blur-[1px]">
+            <p className="text-xs text-[rgba(200,220,255,0.75)] mb-2">
+              今日のオーダー内容
             </p>
+
+            <div className="space-y-1">
+              <div className="flex justify-between">
+                <span className="text-white/65">気分</span>
+                <span className="font-semibold text-white/90">{moodLabel}</span>
+              </div>
+
+              <div className="flex justify-between">
+                <span className="text-white/65">モード</span>
+                <span className="font-semibold text-white/90">{modeLabel}</span>
+              </div>
+            </div>
+          </section>
+
+          {/* 音声案内：voice のときだけ表示 */}
+          {sessionInfo?.mode === 'voice' && (
+            <section className="bg-[rgba(26,47,85,0.55)] border border-[rgba(160,200,255,0.35)] rounded-2xl p-4 text-sm backdrop-blur-[1px]">
+              <p className="text-xs text-[rgba(200,220,255,0.9)] mb-2">
+                音声のみのご案内
+              </p>
+              <p className="text-xs text-white/70 leading-relaxed">
+                まもなく音声での対話が始まります。<br />
+                端末のマイクが使える状態かだけ確認して、そのままお待ちください。
+              </p>
+              <p className="mt-2 text-[10px] text-white/55">
+                ※映像はありません（顔出しなし）
+              </p>
+            </section>
           )}
-        </section>
 
-        {/* Zoom案内：chat のときだけ表示（URLは出さない） */}
-        {sessionInfo?.mode === 'chat' && (
-          <section className="bg-black/50 border border-snack-neon-blue/60 rounded-2xl p-4 text-sm">
-            <p className="text-xs text-snack-neon-blue mb-2">
-              映像付きチャット（Zoom）のご案内
-            </p>
-
-            <p className="text-xs text-gray-300 mb-3">
-              下のボタンから Zoom を開いて、そのままお待ちください。
-            </p>
-
+          {/* もう帰るボタン（右寄り 1/3 + hover青発光） */}
+          <div className="mt-auto pt-6 border-t border-[rgba(160,200,255,0.18)] flex justify-end">
             <button
               type="button"
               onClick={() => {
-                try {
-                  window.open(ZOOM_URL, '_blank', 'noopener,noreferrer');
-                } catch (e) {
-                  console.warn('failed to open zoom url', e);
-                }
+                playEvapSoft();
+                setTimeout(() => onCancel(), 120);
               }}
               className="
-                w-full py-3 rounded-full
-                bg-snack-neon-blue text-black font-semibold text-xs
-                hover:opacity-90 transition
+                w-1/3 py-2 text-[11px] rounded-md text-center
+                border border-[rgba(160,200,255,0.35)] text-white/60
+                transition-all duration-200
+                hover:text-white/80
+                hover:border-[rgba(120,180,255,0.55)]
+                hover:shadow-[0_0_10px_rgba(120,180,255,0.25)]
+                hover:bg-[rgba(120,180,255,0.06)]
               "
             >
+              今日はやめとく...
             </button>
-
-            <p className="mt-2 text-[10px] text-gray-400">
-              ※URLは表示されません（誤共有防止）
-            </p>
-          </section>
-        )}
-
-
-                {/* もう帰るボタン */}
-                <div className="mt-auto pt-4">
-                  <button
-                    type="button"
-                    onClick={() => {
-                          playEvapSoft(); // ← 追加（即）
-                          setTimeout(() => onCancel(), 120);
-                        }}
-                    className="w-full py-3 text-xs rounded-full border border-gray-600 text-gray-300 hover:bg-gray-800 transition-colors"
-                  >
-                    もう帰る
-                  </button>
-                </div>
-      </main>
+          </div>
+        </main>
+      </div>
     </div>
   );
 };
