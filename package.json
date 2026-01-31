@@ -1,9 +1,18 @@
 {
   "name": "snack-no-trace",
   "private": true,
-  "workspaces": ["frontend", "backend"],
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
   "scripts": {
-    "dev": "npm -w backend run dev & npm -w frontend run dev",
-    "dev:win": "start \"\" cmd /c \"npm -w backend run dev\" & start \"\" cmd /c \"npm -w frontend run dev\""
+    "dev": "concurrently -n BACKEND,FRONTEND,NGROK -c cyan,green,magenta \"npm -w backend run dev\" \"npm -w frontend run dev\" \"npm run dev:ngrok\"",
+    "dev:ngrok": "ngrok http 4000",
+
+    "dev:front": "npm -w frontend run dev",
+    "dev:back": "npm -w backend run dev"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
   }
 }

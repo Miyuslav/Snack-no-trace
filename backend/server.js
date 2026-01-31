@@ -265,8 +265,13 @@ function startSessionWithGuest(guestSocketId) {
   console.log("[SESSION START]", { guestSocketId, startedAt });
 
   guestSocket.emit("session.started", {
+    guestSocketId,            // 関数引数の guestSocketId
+    mood: guestInfo.mood,
+    mode: guestInfo.mode,
+    roomId: guestInfo.roomId || null,
     startedAt,
     maxMs: SESSION_MAX_MS,
+    resumed: false,
   });
 
   if (mamaSocket) {
@@ -535,17 +540,22 @@ io.on("connection", (socket) => {
     if (socket !== mamaSocket) return;
     if (!guestSocketId) return;
 
+    // ✅ すでにセッション中なら「切り替え」として強制終了してから開始
     if (activeSession) {
-      const alive = io.sockets.sockets.get(activeSession.guestSocketId);
-      if (!alive) {
-        console.log("[accept] stale activeSession cleared", activeSession.guestSocketId);
-        endActiveSession("stale_active_cleared");
-      } else {
-        console.log("[accept ignored] session already active", activeSession.guestSocketId);
-        return;
+      const prev = activeSession.guestSocketId;
+      console.log("[accept] switching session", { from: prev, to: guestSocketId });
+
+      // ママ側に通知（UI/ログ用）
+      if (mamaSocket) {
+        mamaSocket.emit("system_message", {
+          text: `🔁 お客さんを切り替えます（${prev.slice(0, 6)}... → ${guestSocketId.slice(0, 6)}...）`,
+        });
       }
+
+      endActiveSession("mama_switched_guest");
     }
 
+    // ここで新規セッション開始
     startSessionWithGuest(guestSocketId);
   });
 
