@@ -1,46 +1,51 @@
+//// frontend/src/socket.js
+//import { io } from "socket.io-client";
+//
+//const BACKEND =
+//  import.meta.env.VITE_SOCKET_URL || "http://localhost:4000";
+//
+//export const createSocket = (role = "guest") =>
+//  io(BACKEND, {
+//    transports: ["websocket", "polling"],
+//    withCredentials: true,
+//    auth: { role },
+//    reconnection: true,
+//    reconnectionAttempts: 3,
+//    reconnectionDelay: 800,
+//    timeout: 5000,
+//  });
 // frontend/src/socket.js
 import { io } from "socket.io-client";
 
-function getRole() {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    return params.get("role") === "mama" ? "mama" : "guest";
-  } catch {
-    return "guest";
-  }
-}
+const BACKEND = import.meta.env.VITE_SOCKET_URL || "http://localhost:4000";
 
-const SOCKET_ORIGIN =
-  import.meta.env.VITE_SOCKET_URL ||
-  `${window.location.protocol}//${window.location.hostname}:4000`;
+// roleごとに1本だけ使い回す
+const sockets = new Map();
 
-export const socket = io(SOCKET_ORIGIN, {
-  query: { role: getRole() },
+export const getSocket = (role = "guest") => {
+  if (sockets.has(role)) return sockets.get(role);
 
-  // ✅ websocket優先→失敗したらpolling
-  transports: ["polling"],
+  const sock = io(BACKEND, {
+    transports: ["websocket", "polling"],
+    withCredentials: true,
 
-  // ✅ 切断時の復帰を強くする
-  reconnection: true,
-  reconnectionAttempts: Infinity,
-  reconnectionDelay: 500,
-  reconnectionDelayMax: 3000,
+    // ✅ サーバー側が handshake.auth.role を見るならこれでOK
+    auth: { role },
 
-  // ✅ タイムアウトを少し伸ばす（polling時の不安定対策）
-  timeout: 20000,
+    reconnection: true,
+    reconnectionAttempts: 3,
+    reconnectionDelay: 800,
+    timeout: 5000,
+  });
 
-  withCredentials: false,
-});
+  sockets.set(role, sock);
+  return sock;
+};
 
-socket.on("connect", () => {
-  console.log("[socket] connected", socket.id, "origin=", SOCKET_ORIGIN, "role=", socket.io.opts.query?.role);
-});
-
-socket.on("disconnect", (reason) => {
-  console.warn("[socket] disconnected:", reason);
-});
-
-socket.on("connect_error", (err) => {
-  console.warn("[socket] connect_error:", err?.message || err);
-});
-
+// 任意：明示的に切りたいとき用（ログアウトなど）
+export const disconnectSocket = (role = "guest") => {
+  const sock = sockets.get(role);
+  if (!sock) return;
+  sock.disconnect();
+  sockets.delete(role);
+};
