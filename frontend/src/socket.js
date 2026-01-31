@@ -1,20 +1,5 @@
 //// frontend/src/socket.js
-//import { io } from "socket.io-client";
-//
-//const BACKEND =
-//  import.meta.env.VITE_SOCKET_URL || "http://localhost:4000";
-//
-//export const createSocket = (role = "guest") =>
-//  io(BACKEND, {
-//    transports: ["websocket", "polling"],
-//    withCredentials: true,
-//    auth: { role },
-//    reconnection: true,
-//    reconnectionAttempts: 3,
-//    reconnectionDelay: 800,
-//    timeout: 5000,
-//  });
-// frontend/src/socket.js
+
 import { io } from "socket.io-client";
 
 const BACKEND = import.meta.env.VITE_SOCKET_URL || "http://localhost:4000";

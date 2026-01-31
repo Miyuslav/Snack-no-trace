@@ -106,7 +106,7 @@ const TopSelection = ({ onEnter }) => {
             <h2 className="text-xs mb-4 text-snack-text">対話モード</h2>
             <div className="flex bg-snack-bg-soft/80 p-1 rounded-full mb-4">
               <button
-                className={`flex-1 py-2 rounded-full text-xs font-bold transition ${
+                className={`flex-1 py-3 rounded-full text-xs font-bold transition ${
                   mode === 'text' ? 'bg-gradient-to-r from-snack-neon-pink to-[#a078ffcc] text-snack-bg shadow-neon-pinkviolet' : 'text-snack-text-dim'
                 }`}
                 onClick={() => setMode('text')}
@@ -114,7 +114,7 @@ const TopSelection = ({ onEnter }) => {
                 テキストのみ
               </button>
               <button
-                className={`flex-1 py-2 rounded-full text-xs font-bold transition ${
+                className={`flex-1 py-3 rounded-full text-xs font-bold transition ${
                   mode === 'voice' ? 'bg-gradient-to-r from-snack-neon-pink to-[#a078ffcc] text-snack-bg shadow-neon-pinkviolet' : 'text-snack-text-dim'
                 }`}
                 onClick={() => setMode('voice')}
@@ -122,7 +122,7 @@ const TopSelection = ({ onEnter }) => {
                 音声のみ
               </button>
             </div>
-            <p className="text-[10px] text-snack-text-dim leading-relaxed">
+            <p className="text-[12px] text-snack-text-dim leading-relaxed">
               ・<span className="text-snack-neon-blue font-semibold">テキスト</span>：文字だけで、しっぽりお話しします。<br />
               ・<span className="text-snack-neon-blue font-semibold">音声</span>：声だけで、落ち着いてお話しします。
             </p>

@@ -23,9 +23,8 @@ const VirtualSnackApp = () => {
     socketRef.current = getSocket("guest");
   }
   const socket = socketRef.current;
-
-  const [sessionInfo, setSessionInfo] = useState({ mood: "", mode: "" });
-
+  const [step, setStep] = useState("TOP");
+  const [sessionInfo, setSessionInfo] = useState({ mood: "", mode: "" ,roomId: ""});
 
   // ✅ roomId固定
   const [roomId] = useState(() => {
@@ -35,6 +34,34 @@ const VirtualSnackApp = () => {
     window.localStorage.setItem(key, rid);
     return rid;
   });
+
+  useEffect(() => {
+    socket.emit("join_room", { roomId });
+
+    const onSessionStarted = (payload) => {
+      console.log("[guest] session.started", payload);
+      setSessionInfo((prev) => ({
+        ...prev,
+        mood: payload.mood ?? prev.mood,
+        mode: payload.mode ?? prev.mode,
+        roomId: payload.roomId ?? prev.roomId ?? roomId,
+      }));
+      setStep("SESSION");
+    };
+
+    const onSessionEnded = ({ reason }) => {
+      console.log("[session.ended]", reason);
+      setStep("TOP");
+    };
+
+    socket.on("session.started", onSessionStarted);
+    socket.on("session.ended", onSessionEnded);
+
+    return () => {
+      socket.off("session.started", onSessionStarted);
+      socket.off("session.ended", onSessionEnded);
+    };
+  }, [socket, roomId]);
 
   const enterSoundRef = useRef(null);
 
@@ -130,7 +157,7 @@ const VirtualSnackApp = () => {
           <WaitingRoom sessionInfo={sessionInfo} onCancel={handleLeave} />
         )}
         {path === '/session' && (
-          <SessionRoom sessionInfo={sessionInfo} roomId={roomId} onLeave={handleLeave} />
+          <SessionRoom sessionInfo={sessionInfo} roomId={roomId} onLeave={handleLeave} socket={socket}/>
         )}
       </div>
     </div>

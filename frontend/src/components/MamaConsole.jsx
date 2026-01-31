@@ -117,6 +117,10 @@ const MamaConsole = () => {
     const onChatMessage = ({ from, text }) => {
       addMessage(from === "guest" ? "guest" : "mama", text);
     };
+    const onSystemMessage = ({ text }) => {
+      if (!text) return;
+      addMessage("system", text);
+    };
 
     const onSessionStarted = (payload) => {
       setCurrentGuest({
@@ -199,6 +203,8 @@ const MamaConsole = () => {
     sock.on("voice.join.ready", onVoiceReady);
     sock.on("voice.join.denied", onVoiceDenied);
     sock.on("voice.join.failed", onVoiceFailed);
+    sock.on("system_message", onSystemMessage);
+
 
     return () => {
       sock.off("connect", onConnect);
@@ -216,6 +222,7 @@ const MamaConsole = () => {
       sock.off("voice.join.ready", onVoiceReady);
       sock.off("voice.join.denied", onVoiceDenied);
       sock.off("voice.join.failed", onVoiceFailed);
+      sock.off("system_message", onSystemMessage);
 
       // ✅ ここでdisconnectしない（画面遷移で再接続ループを作りやすい）
     };
