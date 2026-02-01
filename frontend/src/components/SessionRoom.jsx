@@ -286,7 +286,7 @@ const SessionRoom = ({ sessionInfo, onLeave, socket }) => {
       const rid = roomIdRef.current;
       if (!rid) throw new Error("roomId missing");
 
-      const res = await fetch(`${API_ORIGIN}/api/create-checkout-session`, {
+      const res = await fetch("/api/create-checkout-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

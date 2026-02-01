@@ -6,13 +6,15 @@
     "backend"
   ],
   "scripts": {
-    "dev": "concurrently -n BACKEND,FRONTEND,NGROK -c cyan,green,magenta \"npm -w backend run dev\" \"npm -w frontend run dev\" \"npm run dev:ngrok\"",
-    "dev:ngrok": "ngrok http 4000",
-
+    "dev:clean": "kill-port 4000 5173 || true && pkill ngrok || true",
+    "dev": "npm run dev:clean && concurrently --kill-others --kill-others-on-fail -n BACKEND,FRONTEND -c cyan,green \"npm -w backend run dev\" \"npm -w frontend run dev\"",
+    "dev:ngrok": "ngrok http 5173",
+    "ngrok:url": "curl -s http://127.0.0.1:4040/api/tunnels | python3 -c 'import sys,json; d=json.load(sys.stdin); print(next((t[\"public_url\"] for t in d.get(\"tunnels\",[]) if t.get(\"proto\")==\"https\"), \"\"))'",
     "dev:front": "npm -w frontend run dev",
     "dev:back": "npm -w backend run dev"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.2.1",
+    "kill-port": "^2.0.1"
   }
 }

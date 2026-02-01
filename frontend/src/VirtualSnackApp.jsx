@@ -23,7 +23,16 @@ const VirtualSnackApp = () => {
     socketRef.current = getSocket("guest");
   }
   const socket = socketRef.current;
-  const [step, setStep] = useState("TOP");
+  const STEP_KEY = "snack_step";
+
+  const [step, setStep] = useState(() => {
+    return window.localStorage.getItem(STEP_KEY) || "TOP";
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem(STEP_KEY, step);
+  }, [step]);
+
   const [sessionInfo, setSessionInfo] = useState({ mood: "", mode: "" ,roomId: ""});
 
   // ✅ roomId固定

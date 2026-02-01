@@ -1,33 +1,35 @@
-//// frontend/src/socket.js
-
+// frontend/src/socket.js
 import { io } from "socket.io-client";
 
-const BACKEND = import.meta.env.VITE_SOCKET_URL || "http://localhost:4000";
-
-// roleごとに1本だけ使い回す
 const sockets = new Map();
 
 export const getSocket = (role = "guest") => {
   if (sockets.has(role)) return sockets.get(role);
 
-  const sock = io(BACKEND, {
-    transports: ["websocket", "polling"],
+  const sock = io(window.location.origin, {
+    path: "/socket.io",
+    transports: ["polling", "websocket"], // まずは安定優先
     withCredentials: true,
-
-    // ✅ サーバー側が handshake.auth.role を見るならこれでOK
     auth: { role },
-
     reconnection: true,
-    reconnectionAttempts: 3,
+    reconnectionAttempts: 10,
     reconnectionDelay: 800,
-    timeout: 5000,
+    timeout: 20000,
   });
+
+  // デバッグ（どこに繋いでるか固定確認）
+  sock.on("connect", () =>
+    console.log("[socket] connected", { id: sock.id, uri: sock.io.uri })
+  );
+  sock.on("connect_error", (e) =>
+    console.warn("[socket] connect_error", e?.message)
+  );
 
   sockets.set(role, sock);
   return sock;
 };
 
-// 任意：明示的に切りたいとき用（ログアウトなど）
+
 export const disconnectSocket = (role = "guest") => {
   const sock = sockets.get(role);
   if (!sock) return;

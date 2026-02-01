@@ -1,29 +1,37 @@
 // frontend/src/components/Return.jsx
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 export default function Return() {
+  const nav = useNavigate();
+
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
-  const tip = params.get('tip'); // success / cancel
-  const sessionId = params.get('session_id');
+  const tip = params.get("tip"); // success / cancel
+  const sessionId = params.get("session_id");
+  const roomId = params.get("roomId"); // ✅ ここで取る（最上部）
 
-  const [phase, setPhase] = useState('init'); // init -> trying_close -> fallback
-  const isSuccess = tip === 'success';
-  const isCancel = tip === 'cancel';
+  const [phase, setPhase] = useState("init"); // init -> trying_close -> fallback
+  const isSuccess = tip === "success";
+  const isCancel = tip === "cancel";
 
-  // まずは「このタブが自分で開いたもの」判定（ベストエフォート）
   const isPopup = useMemo(() => {
     try {
-      // startTipPaymentで payWin.name='tip_popup' してる前提
-      if (window.name === 'tip_popup') return true;
-      // 同一オリジンのsessionStorageはStripe遷移後も生きることがある（環境差あり）
-      if (window.sessionStorage.getItem('tip_popup') === '1') return true;
+      if (window.name === "tip_popup") return true;
+      if (window.sessionStorage.getItem("tip_popup") === "1") return true;
     } catch {}
     return false;
   }, []);
 
   const goBackToSession = () => {
-    // 戻り先は好みで '/session' or '/' でOK
-    window.location.replace('/session');
+    try {
+      // ✅ 戻るための状態を保存
+      if (roomId) localStorage.setItem("snack_room_id", roomId);
+      localStorage.setItem("snack_step", "SESSION");
+      if (sessionId) localStorage.setItem("last_checkout_session_id", sessionId);
+    } catch {}
+
+    // ✅ ルーティングがstep管理なら / に戻すのが正解
+    window.location.replace("/");
   };
 
   useEffect(() => {
@@ -33,11 +41,16 @@ export default function Return() {
       return;
     }
 
-    setPhase('trying_close');
+    // ✅ 先に保存してから処理（重要）
+    try {
+      if (roomId) localStorage.setItem("snack_room_id", roomId);
+      localStorage.setItem("snack_step", "SESSION");
+      if (sessionId) localStorage.setItem("last_checkout_session_id", sessionId);
+    } catch {}
 
-    // ちょい待ってから閉じるを試す（即時だと失敗しやすい）
+    setPhase("trying_close");
+
     const t1 = window.setTimeout(() => {
-      // ポップアップじゃないなら閉じられないことが多いので、ここで無理しない
       if (isPopup) {
         try {
           window.close();
@@ -45,10 +58,11 @@ export default function Return() {
       }
     }, 600);
 
-    // さらに待って、閉じられなかったらフォールバックUIへ
     const t2 = window.setTimeout(() => {
-      setPhase('fallback');
-    }, isPopup ? 1200 : 300); // popupじゃなければすぐUI出す
+      setPhase("fallback");
+      // ✅ popupじゃないなら自動で戻す（好みで）
+      if (!isPopup) goBackToSession();
+    }, isPopup ? 1200 : 300);
 
     return () => {
       window.clearTimeout(t1);

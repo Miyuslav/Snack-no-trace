@@ -20,6 +20,8 @@ if (!stripe) {
   console.warn("[Stripe] STRIPE_SECRET_KEY missing: tipping disabled");
 }
 
+console.log("STRIPE_SECRET_KEY =", process.env.STRIPE_SECRET_KEY?.slice(0, 12), "...");
+
 const app = express();
 
 // =========================
@@ -109,16 +111,76 @@ app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), (req,
 // =========================
 // 通常ミドルウェア（Webhookの後）
 // =========================
+// JSON body を読む
 app.use(express.json());
+
+// ✅ Tip: Checkout Session 作成
+app.post("/create-checkout-session", async (req, res) => {
+  try {
+    const { amount, roomId, guestId } = req.body || {};
+
+    if (!amount || typeof amount !== "number") {
+      return res.status(400).json({ error: "amount must be a number" });
+    }
+
+    const Stripe = require("stripe");
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+    const FRONT_URL =
+      process.env.FRONT_URL ||
+      `${req.protocol}://${req.get("host")}`; // ざっくり（必要なら固定化）
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "jpy",
+            product_data: { name: "Virtual Snack Tip 🍶" },
+            unit_amount: amount,
+          },
+          quantity: 1,
+        },
+      ],
+      metadata: { roomId: roomId || "", guestId: guestId || "" },
+
+      // ✅ ここを変更
+        success_url: `${FRONT_URL}/return?tip=success&roomId=${encodeURIComponent(roomId || "")}&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url:  `${FRONT_URL}/return?tip=cancel&roomId=${encodeURIComponent(roomId || "")}`,
+
+    });
+
+
+    return res.json({ url: session.url });
+  } catch (e) {
+    console.error("[create-checkout-session] error:", e);
+    return res.status(500).json({ error: e.message || "server error" });
+  }
+});
+
 
 // =========================
 // HTTP server & Socket.io
 // =========================
 const server = http.createServer(app);
 
+const shutdown = (signal) => {
+  console.log(`[shutdown] ${signal}`);
+  io?.close?.();          // socket.ioを閉じる
+  server.close(() => {
+    console.log("HTTP server closed");
+    process.exit(0);
+  });
+};
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+process.on("SIGQUIT", shutdown);
+
 const io = new Server(server, {
   cors: {
-    origin: ALLOWED_ORIGINS,
+    origin: true,
     credentials: true,
     methods: ["GET", "POST"],
   },
@@ -659,8 +721,12 @@ app.post("/api/create-checkout-session", async (req, res) => {
         roomId,
         ...(socketId ? { socketId } : {}),
       },
-      success_url: `${process.env.APP_URL}/return?tip=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.APP_URL}/return?tip=cancel`,
+      success_url: `${process.env.APP_URL}/return?tip=success&roomId=${encodeURIComponent(
+        roomId
+      )}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.APP_URL}/return?tip=cancel&roomId=${encodeURIComponent(
+        roomId
+      )}`,
     });
 
     return res.json({ url: session.url });
@@ -676,4 +742,13 @@ app.post("/api/create-checkout-session", async (req, res) => {
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`server on ${PORT}`);
+});
+
+process.on("SIGINT", () => {
+  console.log("SIGINT received, shutting down...");
+  server.close(() => process.exit(0));
+});
+process.on("SIGTERM", () => {
+  console.log("SIGTERM received, shutting down...");
+  server.close(() => process.exit(0));
 });
