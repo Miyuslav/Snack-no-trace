@@ -1,38 +1,28 @@
 // frontend/src/socket.js
 import { io } from "socket.io-client";
 
-const sockets = new Map();
+const BACKEND =
+  import.meta.env.VITE_SOCKET_URL ||
+  `${window.location.protocol}//${window.location.hostname}:4000`;
 
-export const getSocket = (role = "guest") => {
-  if (sockets.has(role)) return sockets.get(role);
+const cache = new Map();
 
-  const sock = io(window.location.origin, {
+export function getSocket(role) {
+  if (cache.has(role)) return cache.get(role);
+
+  const s = io(BACKEND, {
     path: "/socket.io",
-    transports: ["polling", "websocket"], // まずは安定優先
+    transports: ["websocket", "polling"],
     withCredentials: true,
-    auth: { role },
+    query: { role },
     reconnection: true,
-    reconnectionAttempts: 10,
-    reconnectionDelay: 800,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 500,
+    reconnectionDelayMax: 4000,
     timeout: 20000,
+    autoConnect: true,
   });
 
-  // デバッグ（どこに繋いでるか固定確認）
-  sock.on("connect", () =>
-    console.log("[socket] connected", { id: sock.id, uri: sock.io.uri })
-  );
-  sock.on("connect_error", (e) =>
-    console.warn("[socket] connect_error", e?.message)
-  );
-
-  sockets.set(role, sock);
-  return sock;
-};
-
-
-export const disconnectSocket = (role = "guest") => {
-  const sock = sockets.get(role);
-  if (!sock) return;
-  sock.disconnect();
-  sockets.delete(role);
-};
+  cache.set(role, s);
+  return s;
+}

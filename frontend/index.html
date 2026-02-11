@@ -2,18 +2,22 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>Virtual Snack</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-
-  <!-- ★ ここを追加：やわらかめの毛筆＆明朝フォント -->
-  <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Yuji+Mai&family=Shippori+Mincho+B1&display=swap"
-  />
+  <title>Virtual Snack</title>
 </head>
 <body class="bg-snack-bg text-snack-text">
 <div id="root"></div>
+
+<!-- 開発中だけ：白/黒画面の原因がここに出る -->
+<pre id="fatal" style="
+      position:fixed; left:8px; right:8px; bottom:8px;
+      max-height:45vh; overflow:auto;
+      background:rgba(0,0,0,.75); color:#fff;
+      padding:10px; border-radius:10px;
+      font-size:12px; z-index:999999;
+      white-space:pre-wrap;
+    "></pre>
+
 <script type="module" src="/src/main.jsx"></script>
 </body>
-
 </html>

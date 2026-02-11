@@ -1,17 +1,15 @@
-import React, { useRef, useState, useEffect,useCallback} from 'react';
-import Daily from '@daily-co/daily-js';
+import React, { useRef, useState, useEffect, useCallback } from "react";
 
-const WaitingRoom = ({ sessionInfo, onCancel }) => {
+const WaitingRoom = ({ sessionInfo, onCancel, socket }) => {
   // ===== SFX =====
   const evapSoundRef = useRef(null);
 
   const playEvapSoft = useCallback(() => {
-    if (typeof window === 'undefined' || typeof Audio === 'undefined') return;
-
+    if (typeof window === "undefined" || typeof Audio === "undefined") return;
     try {
       if (!evapSoundRef.current) {
-        const a = new Audio('/door_out.mp3');
-        a.preload = 'auto';
+        const a = new Audio("/door_out.mp3");
+        a.preload = "auto";
         a.volume = 0.2;
         evapSoundRef.current = a;
       }
@@ -19,114 +17,52 @@ const WaitingRoom = ({ sessionInfo, onCancel }) => {
       a.currentTime = 0;
       a.play().catch(() => {});
     } catch (e) {
-      console.warn('evap sound error', e);
+      console.warn("evap sound error", e);
     }
   }, []);
 
-  const moodLabel =
-    sessionInfo?.mood === 'relax'
-      ? '癒されたい'
-      : sessionInfo?.mood === 'listen'
-      ? '話を聞いてほしい'
-      : sessionInfo?.mood === 'advise'
-      ? '悩みを相談したい'
-      : 'おまかせ';
+  // ===== (Optional) Mic permission preflight =====
+  // 方針A: 通話(join)は SessionRoom だけ。
+  // WaitingRoom は「マイク許可だけ先に取る」程度にとどめる。
+  const [micStatus, setMicStatus] = useState("idle"); // idle|checking|ready|denied
 
-  const modeLabel = sessionInfo?.mode === 'voice' ? '音声のみ' : 'テキストのみ';
-
-  // ===== Voice (Daily) =====
-  const callRef = useRef(null);
-  const [voiceStatus, setVoiceStatus] = useState('idle'); // idle|ready|joining|joined|failed
-  const [voiceInfo, setVoiceInfo] = useState(null); // { roomUrl, token, resumed }
-
-  const destroyCall = async () => {
-    const call = callRef.current;
-    callRef.current = null;
-    setVoiceInfo(null);
-    setVoiceStatus('idle');
-
-    if (call) {
-      try {
-        await call.leave();
-      } catch {}
-      try {
-        call.destroy();
-      } catch {}
+  const checkMicPermission = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setMicStatus("denied");
+      return;
     }
-  };
-
-  const joinVoice = async ({ roomUrl, token, resumed }) => {
-    if (!roomUrl) return;
-    if (voiceStatus === 'joined' || voiceStatus === 'joining') return;
-
     try {
-      setVoiceStatus('joining');
-
-      const call = Daily.createCallObject({
-        videoSource: false, // ✅ 音声のみ
-      });
-      callRef.current = call;
-
-      call.on('joined-meeting', () => setVoiceStatus('joined'));
-      call.on('left-meeting', () => setVoiceStatus('idle'));
-      call.on('error', (e) => {
-        console.warn('[Daily error]', e);
-        setVoiceStatus('failed');
-      });
-
-      // ✅ iPhone: “ボタン押下中”に join が走るのが超重要
-      await call.join({
-        url: roomUrl,
-        token,
-        videoSource: false,
-      });
-
-      // joined-meeting が走って joined になる
-      console.log('[Daily] joined', { resumed: !!resumed });
+      setMicStatus("checking");
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      // すぐ解放（SessionRoomで改めてDaily join時に使う）
+      stream.getTracks().forEach((t) => t.stop());
+      setMicStatus("ready");
     } catch (e) {
-      console.warn('[joinVoice] failed', e);
-      setVoiceStatus('failed');
-      await destroyCall();
+      console.warn("[mic] permission denied", e);
+      setMicStatus("denied");
     }
-  };
-
-  const requestVoiceJoin = () => {
-    // token 取りに行くだけ（マイク許可はまだ）
-    setVoiceStatus('joining');
-  };
-
-  // voice token 受け取り
-  useEffect(() => {
-    const onVoiceReady = (payload) => {
-      // { roomUrl, token, resumed }
-      setVoiceInfo(payload);
-      setVoiceStatus('ready');
-      console.log('[voice.join.ready]', payload);
-    };
-
-    const onVoiceDenied = ({ reason }) => {
-      setVoiceStatus('failed');
-      console.warn('[voice.join.denied]', reason);
-    };
-
   }, []);
 
-  // 退出時は必ず音声も掃除
+  // voiceモードのときだけ、待機中に1回チェックしておく（任意）
   useEffect(() => {
-    return () => {
-      destroyCall();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (sessionInfo?.mode !== "voice") return;
+    // 自動で出したくないなら、このuseEffectは削って、ボタン押下型にしてもOK
+    checkMicPermission();
+  }, [sessionInfo?.mode, checkMicPermission]);
 
-  const voiceButtonLabel =
-    voiceStatus === 'joined'
-      ? '音声 入室中'
-      : voiceInfo
-      ? '音声を開始（マイク許可）'
-      : voiceStatus === 'joining'
-      ? '準備中...'
-      : '音声を準備';
+  // ===== UI Labels =====
+  const moodLabel =
+    sessionInfo?.mood === "relax" ? "癒されたい" :
+    sessionInfo?.mood === "listen" ? "話を聞いてほしい" :
+    sessionInfo?.mood === "advise" ? "悩みを相談したい" : "おまかせ";
+
+  const modeLabel = sessionInfo?.mode === "voice" ? "音声のみ" : "テキストのみ";
+
+  const micLabel =
+    micStatus === "ready" ? "マイクOK" :
+    micStatus === "checking" ? "マイク確認中..." :
+    micStatus === "denied" ? "マイク許可が必要です" :
+    "未確認";
 
   return (
     <div
@@ -138,13 +74,13 @@ const WaitingRoom = ({ sessionInfo, onCancel }) => {
         pt-[max(10px,env(safe-area-inset-top))]
       "
     >
-      {/* うっすら霧（ネイビーで上品に） */}
+      {/* うっすら霧 */}
       <div
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            'radial-gradient(1000px 520px at 50% 20%, rgba(90,140,200,0.22), transparent 62%),' +
-            'radial-gradient(900px 520px at 50% 60%, rgba(80,130,190,0.20), transparent 65%)',
+            "radial-gradient(1000px 520px at 50% 20%, rgba(90,140,200,0.22), transparent 62%)," +
+            "radial-gradient(900px 520px at 50% 60%, rgba(80,130,190,0.20), transparent 65%)",
         }}
         aria-hidden="true"
       />
@@ -227,53 +163,31 @@ const WaitingRoom = ({ sessionInfo, onCancel }) => {
             </div>
           </section>
 
-          {/* ✅ 音声ボタン：voice のときだけ */}
-          {sessionInfo?.mode === 'voice' && (
+          {/* ✅ voice のときだけ：マイク事前確認（任意） */}
+          {sessionInfo?.mode === "voice" && (
             <section className="bg-[rgba(26,47,85,0.55)] border border-[rgba(160,200,255,0.35)] rounded-2xl p-4 text-sm backdrop-blur-[1px]">
               <p className="text-xs text-[rgba(200,220,255,0.9)] mb-2">音声のみ</p>
 
               <div className="flex items-center justify-between gap-3">
                 <div className="text-[12px] text-white/70">
-                  状態：<span className="text-white/90">{voiceStatus}</span>
+                  マイク：<span className="text-white/90">{micLabel}</span>
                 </div>
 
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      // 1回目：token準備 / 2回目：join（ここでマイク許可が出る）
-                      if (!voiceInfo) requestVoiceJoin();
-                      else joinVoice(voiceInfo);
-                    }}
-                    disabled={voiceStatus === 'joining' || voiceStatus === 'joined'}
-                    className="
-                      px-4 py-2 rounded-full text-xs font-semibold
-                      bg-[rgba(80,160,255,0.95)] text-black
-                      hover:brightness-105 active:brightness-95 transition
-                      disabled:opacity-40
-                    "
-                  >
-                    {voiceButtonLabel}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={destroyCall}
-                    disabled={voiceStatus !== 'joined'}
-                    className="
-                      px-4 py-2 rounded-full text-xs font-semibold
-                      border border-[rgba(160,200,255,0.35)] text-white/75
-                      hover:bg-[rgba(255,255,255,0.06)] transition
-                      disabled:opacity-40
-                    "
-                  >
-                    音声を抜ける
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={checkMicPermission}
+                  className="
+                    px-4 py-2 rounded-full text-xs font-semibold
+                    bg-[rgba(80,160,255,0.95)] text-black
+                    hover:brightness-105 active:brightness-95 transition
+                  "
+                >
+                  マイク確認
+                </button>
               </div>
 
               <p className="mt-2 text-[10px] text-white/55">
-                ※「音声を開始（マイク許可）」を押すと、iPhoneでマイク許可が出ます
+                ※通話は「扉が開いたあと（セッション開始後）」に自動で接続します
               </p>
             </section>
           )}
@@ -284,8 +198,7 @@ const WaitingRoom = ({ sessionInfo, onCancel }) => {
               type="button"
               onClick={() => {
                 playEvapSoft();
-                destroyCall(); // ✅ 念のため
-                setTimeout(() => onCancel(), 120);
+                onCancel();
               }}
               className="
                 w-1/3 py-2 text-[11px] rounded-md text-center

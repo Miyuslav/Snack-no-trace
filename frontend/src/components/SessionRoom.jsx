@@ -1,60 +1,73 @@
+// frontend/src/components/SessionRoom.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-// ✅ SessionRoomは socket を作らない。必ず props で受け取る。
-const SessionRoom = ({ sessionInfo, onLeave, socket }) => {
+export default function SessionRoom({ sessionInfo, socket, onLeave }) {
+  // ✅ 固定セッション部屋ID（.envで上書き可）
+  const rid = import.meta.env.VITE_MAMA_ROOM_ID || "room_mama_fixed";
+
   // =========================
   // Mode
   // =========================
-  const mode = sessionInfo?.mode; // "text" | "voice"
+  const mode = useMemo(() => sessionInfo?.mode || "text", [sessionInfo?.mode]);
   const isText = mode === "text";
   const isVoice = mode === "voice";
 
   // =========================
   // UI / sounds / refs
   // =========================
-  const roomIdRef = useRef(sessionInfo?.roomId || null);
-
   const cheersSoundRef = useRef(null);
   const leaveSoundRef = useRef(null);
-
   const payWinRef = useRef(null);
-  const tipTimerRef = useRef(null);
 
   const [tipEffect, setTipEffect] = useState(false);
   const [tipOpen, setTipOpen] = useState(false);
   const [tipLoading, setTipLoading] = useState(false);
 
-  // チップ選択肢（元に合わせて変更OK）
   const TIP_OPTIONS = useMemo(() => [100, 300, 500], []);
-
-  // API origin（元コードに合わせる）
-  const API_ORIGIN =
-    import.meta.env.VITE_API_ORIGIN ||
-    import.meta.env.VITE_BACKEND_URL ||
-    "http://localhost:4000";
-
-  // 例：ポップアップ内で閉じるボタンを出すか（必要なら sessionInfo などで切替）
-  const showCloseButton = false;
 
   // =========================
   // Chat (text mode)
   // =========================
-  const [messages, setMessages] = useState([]);
+  const CHAT_KEY = useMemo(() => `snack_chat_${rid}`, [rid]);
+
+  const [messages, setMessages] = useState(() => {
+    try {
+      const raw = localStorage.getItem(CHAT_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const [input, setInput] = useState("");
 
   const addMessage = useCallback((from, text) => {
     setMessages((prev) => [...prev, { id: prev.length + 1, from, text }]);
   }, []);
 
+  useEffect(() => {
+    try {
+      const trimmed = messages.slice(-200);
+      localStorage.setItem(CHAT_KEY, JSON.stringify(trimmed));
+    } catch {}
+  }, [CHAT_KEY, messages]);
+
   // =========================
   // Voice (Daily)
   // =========================
   const callRef = useRef(null);
-  const [voiceStatus, setVoiceStatus] = useState("idle"); // idle | ready | joining | joined | failed
-  const [voiceInfo, setVoiceInfo] = useState(null); // { roomUrl, token, resumed? }
+  const debugIntervalRef = useRef(null);
+
+  const [voiceStatus, setVoiceStatus] = useState("idle"); // idle | joining | joined | failed
+  const voiceInfo = useMemo(() => sessionInfo?.voiceInfo || null, [sessionInfo?.voiceInfo]);
   const [voiceErr, setVoiceErr] = useState("");
 
   const destroyCall = useCallback(async () => {
+    if (debugIntervalRef.current) {
+      window.clearInterval(debugIntervalRef.current);
+      debugIntervalRef.current = null;
+    }
+
     const call = callRef.current;
     callRef.current = null;
 
@@ -72,12 +85,11 @@ const SessionRoom = ({ sessionInfo, onLeave, socket }) => {
   }, []);
 
   const joinVoice = useCallback(async () => {
-    // iPhone重要：必ずボタン押下で呼ぶ
     setVoiceErr("");
 
     if (!voiceInfo?.roomUrl) {
       setVoiceStatus("failed");
-      setVoiceErr("音声情報がまだ届いていません（voice.join.ready待ち）");
+      setVoiceErr("音声の準備中です（session.started に voiceInfo が来るまで待ってね）");
       return;
     }
     if (voiceStatus === "joining" || voiceStatus === "joined") return;
@@ -89,10 +101,15 @@ const SessionRoom = ({ sessionInfo, onLeave, socket }) => {
       const call = Daily.createCallObject({ videoSource: false });
       callRef.current = call;
 
-      call.on("joined-meeting", () => setVoiceStatus("joined"));
+      call.on("joined-meeting", () => {
+        setVoiceStatus("joined");
+        try {
+          call.setLocalAudio(true);
+        } catch {}
+      });
+
       call.on("left-meeting", () => setVoiceStatus("idle"));
       call.on("error", (e) => {
-        console.warn("[Daily error]", e);
         setVoiceStatus("failed");
         setVoiceErr(e?.errorMsg || e?.message || "Daily error");
       });
@@ -103,9 +120,28 @@ const SessionRoom = ({ sessionInfo, onLeave, socket }) => {
         videoSource: false,
       });
 
+      try {
+        await call.setLocalAudio(true);
+      } catch {}
+      try {
+        await call.setLocalVideo(false);
+      } catch {}
+
+      // デバッグ観測（必要なら）
+      try {
+        call.startLocalAudioLevelObserver(200);
+        call.startRemoteParticipantsAudioLevelObserver(200);
+      } catch {}
+
+      debugIntervalRef.current = window.setInterval(() => {
+        try {
+          // eslint-disable-next-line no-console
+          console.log("[Daily] participants", Object.keys(call.participants?.() || {}));
+        } catch {}
+      }, 1500);
+
       addMessage("system", "🔊 音声ルームに入りました");
     } catch (e) {
-      console.warn("[joinVoice] failed", e);
       setVoiceStatus("failed");
       setVoiceErr(e?.message || "join failed");
       await destroyCall();
@@ -118,22 +154,31 @@ const SessionRoom = ({ sessionInfo, onLeave, socket }) => {
     await destroyCall();
   }, [destroyCall, addMessage]);
 
+  // voiceInfoが来たら自動で一回だけ join
+  const autoJoinedRef = useRef(false);
+  useEffect(() => {
+    if (!isVoice) {
+      autoJoinedRef.current = false;
+      return;
+    }
+    if (!voiceInfo?.roomUrl) return;
+    if (autoJoinedRef.current) return;
+    autoJoinedRef.current = true;
+    joinVoice();
+  }, [isVoice, voiceInfo?.roomUrl, joinVoice]);
+
   // =========================
   // Sounds init
   // =========================
   useEffect(() => {
     if (typeof window === "undefined" || typeof Audio === "undefined") return;
-    cheersSoundRef.current = new Audio("/kanpai.mp3"); // 元のパスに合わせて変更OK
+
+    cheersSoundRef.current = new Audio("/kanpai.mp3");
     cheersSoundRef.current.volume = 0.6;
 
-    leaveSoundRef.current = new Audio("/door_out.mp3"); // 元の退出音に合わせて変更OK
+    leaveSoundRef.current = new Audio("/door_out.mp3");
     leaveSoundRef.current.volume = 0.7;
   }, []);
-
-  // roomIdRef 同期
-  useEffect(() => {
-    if (sessionInfo?.roomId) roomIdRef.current = sessionInfo.roomId;
-  }, [sessionInfo?.roomId]);
 
   // =========================
   // Socket handlers
@@ -141,65 +186,46 @@ const SessionRoom = ({ sessionInfo, onLeave, socket }) => {
   useEffect(() => {
     if (!socket) return;
 
-    // chat.message
     const onChat = ({ from, text }) => {
-      if (!isText) return; // ✅ textモード以外は無視（混線防止）
+      if (!isText) return;
       addMessage(from === "mama" ? "mama" : "user", text);
     };
 
     const onEnded = ({ reason }) => {
       addMessage("system", `セッションが終了しました（理由: ${reason}）`);
-      leaveVoice();
+      if (isVoice) leaveVoice();
       onLeave?.();
-    };
-
-    // voice.join.ready / failed
-    const onVoiceReady = (payload) => {
-      if (!isVoice) return;
-      setVoiceInfo(payload);
-      setVoiceStatus("ready");
-      addMessage("system", "🔑 音声の準備ができました。「音声に入る」を押してください。");
-    };
-
-    const onVoiceFailed = ({ message }) => {
-      if (!isVoice) return;
-      setVoiceStatus("failed");
-      setVoiceErr(message || "voice prepare failed");
-      addMessage("system", `⚠️ 音声の準備に失敗：${message || "unknown"}`);
     };
 
     socket.on("chat.message", onChat);
     socket.on("session.ended", onEnded);
-    socket.on("voice.join.ready", onVoiceReady);
-    socket.on("voice.join.failed", onVoiceFailed);
 
     return () => {
       socket.off("chat.message", onChat);
       socket.off("session.ended", onEnded);
-      socket.off("voice.join.ready", onVoiceReady);
-      socket.off("voice.join.failed", onVoiceFailed);
     };
   }, [socket, isText, isVoice, addMessage, leaveVoice, onLeave]);
 
-  // mode切替時に初期化（壊れ防止）
+  // =========================
+  // Mode change reset
+  // =========================
   useEffect(() => {
     setMessages([]);
     setInput("");
     setTipOpen(false);
     setTipLoading(false);
 
-    setVoiceInfo(null);
     setVoiceStatus("idle");
     setVoiceErr("");
+    autoJoinedRef.current = false;
 
-    // voiceモードで残ってる通話があれば落とす
     return () => {
       destroyCall();
     };
   }, [mode, destroyCall]);
 
   // =========================
-  // Actions (text mode UI)
+  // Actions
   // =========================
   const handleSend = useCallback(() => {
     const trimmed = input.trim();
@@ -218,38 +244,31 @@ const SessionRoom = ({ sessionInfo, onLeave, socket }) => {
   };
 
   const handleCheers = () => {
-    if (!isText) return; // ✅ voiceで混線させない（必要なら消してOK）
-    if (cheersSoundRef.current) {
-      try {
-        cheersSoundRef.current.currentTime = 0;
-        cheersSoundRef.current.play();
-      } catch (e) {
-        console.warn("cheers sound play error", e);
-      }
-    }
+    if (!isText) return;
+
+    try {
+      if (cheersSoundRef.current) cheersSoundRef.current.currentTime = 0;
+      cheersSoundRef.current?.play?.();
+    } catch {}
 
     const userText = "🍸 乾杯！";
     addMessage("user", userText);
     socket?.emit("guest.message", { text: userText });
 
     window.setTimeout(() => {
-      if (cheersSoundRef.current) {
-        try {
-          cheersSoundRef.current.currentTime = 0;
-          cheersSoundRef.current.play();
-        } catch (e) {
-          console.warn("mama cheers sound error", e);
-        }
-      }
+      try {
+        if (cheersSoundRef.current) cheersSoundRef.current.currentTime = 0;
+        cheersSoundRef.current?.play?.();
+      } catch {}
       addMessage("mama", "🍸 乾杯！");
       setTipEffect(true);
-      window.setTimeout(() => setTipEffect(false), 1000);
-    }, 1000);
+      window.setTimeout(() => setTipEffect(false), 900);
+    }, 800);
   };
 
   const handleConsult = () => {
     if (!isText) return;
-    const text = " ちょっと相談したいことがあるんだ。";
+    const text = "ちょっと相談したいことがあるんだ。";
     addMessage("user", text);
     socket?.emit("guest.message", { text });
   };
@@ -259,329 +278,315 @@ const SessionRoom = ({ sessionInfo, onLeave, socket }) => {
     setTipOpen(true);
   };
 
-  const startTipPayment = async (amount) => {
-    if (!isText) return;
-
-    const payWin = window.open("about:blank", "_blank");
-    payWinRef.current = payWin;
-
-    try {
-      if (!payWin) {
-        addMessage("system", "ポップアップがブロックされました。設定で許可してもう一度試してね🙏");
-        return;
-      }
-
-      setTipLoading(true);
-
+  const startTipPayment = useCallback(
+    async (amount) => {
       const text = `💸 チップ ¥${amount} をはずむ。`;
       addMessage("user", text);
       socket?.emit("guest.message", { text });
-
-      setTipEffect(true);
       socket?.emit("guest.tip", { amount });
 
-      if (tipTimerRef.current) window.clearTimeout(tipTimerRef.current);
-      tipTimerRef.current = window.setTimeout(() => setTipEffect(false), 900);
+      const ua = navigator.userAgent;
+      const isIOS =
+        /iP(hone|ad|od)/.test(ua) ||
+        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+      const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|Android/.test(ua);
+      const isIPhoneSafari = isIOS && isSafari;
 
-      const rid = roomIdRef.current;
-      if (!rid) throw new Error("roomId missing");
-
-      const res = await fetch("/api/create-checkout-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount,
-          roomId: rid,
-          socketId: socket?.id,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data?.url) throw new Error(data?.error || "failed to create session");
-
+      setTipLoading(true);
       try {
-        payWin.sessionStorage.setItem("tip_popup", "1");
-      } catch {}
-      try {
-        payWin.name = "tip_popup";
-      } catch {}
+        const res = await fetch("/api/create-checkout-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ amount, roomId: rid, socketId: socket?.id || "" }),
+          credentials: "include",
+        });
 
-      payWin.location.replace(data.url);
-    } catch (e) {
-      console.error(e);
-      try {
-        if (payWin && !payWin.closed) payWin.close();
-      } catch {}
-      payWinRef.current = null;
-      addMessage("system", "決済の開始に失敗しました…");
-    } finally {
-      setTipLoading(false);
-      setTipOpen(false);
-    }
-  };
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.url) {
+          addMessage("system", "決済の準備に失敗しました");
+          return;
+        }
 
-  // =========================
-  // UI labels
-  // =========================
+        if (isIPhoneSafari) {
+          window.location.assign(data.url);
+        } else {
+          const payWin = window.open("about:blank", "_blank");
+          payWinRef.current = payWin;
+
+          if (!payWin) {
+            addMessage("system", "ポップアップがブロックされました。許可して再試行してね🙏");
+            return;
+          }
+          payWin.location.replace(data.url);
+        }
+      } finally {
+        setTipLoading(false);
+        setTipOpen(false);
+      }
+    },
+    [rid, socket, addMessage]
+  );
+
   const voiceStatusLabel =
     voiceStatus === "idle"
       ? "未接続"
-      : voiceStatus === "ready"
-      ? "準備OK"
       : voiceStatus === "joining"
       ? "接続中..."
       : voiceStatus === "joined"
       ? "通話中"
       : "失敗";
 
-  // =========================
-  // Render
-  // =========================
-  return (
-    <div className="relative min-h-screen overflow-hidden text-white bg-black">
-      {/* ===== 黒下地（いちばん下） ===== */}
-      <div className="absolute inset-0 bg-black" />
+  const handleLeaveAll = useCallback(() => {
+    if (isVoice) leaveVoice();
 
-      {/* ===== 背景レイヤー（縮小） ===== */}
-      <div
-        className="absolute inset-0"
-        style={{
-          backgroundImage: "url('/assets/session.jpg')",
-          backgroundRepeat: "no-repeat",
-          backgroundPosition: "center",
-          backgroundSize: "cover",
-          transform: "scale(0.92)", // ★ 縮小率（0.90〜0.96で調整）
-          transformOrigin: "center",
-        }}
-      />
+    try {
+      if (leaveSoundRef.current) {
+        leaveSoundRef.current.currentTime = 0;
+        leaveSoundRef.current.play();
+      }
+    } catch {}
 
-      {/* ===== 中身（UI） ===== */}
-      <div className={"relative z-10 flex flex-col min-h-screen overflow-hidden " + (tipEffect ? "shadow-neon-pink" : "")}>
-        {showCloseButton && (
-          <div className="absolute top-3 right-3 z-[60]">
-            <button
-              type="button"
-              onClick={() => window.close()}
-              className="px-3 py-1 rounded-full border border-white/20 bg-black/60 text-xs text-white"
-            >
-              この画面を閉じる
-            </button>
-          </div>
-        )}
+    window.setTimeout(() => onLeave?.(), 400);
+  }, [isVoice, leaveVoice, onLeave]);
 
-        {tipEffect && (
-          <div className="pointer-events-none absolute inset-0 overflow-hidden">
-            <div className="absolute bottom-4 left-1/3 w-6 h-6 rounded-full border border-yellow-300 bg-yellow-200/90 animate-coin" />
-            <div className="absolute bottom-6 left-1/2 w-5 h-5 rounded-full border border-yellow-300 bg-yellow-200/80 animate-coin delay-150" />
-            <div className="absolute bottom-3 left-2/3 w-4 h-4 rounded-full border border-yellow-300 bg-yellow-200/70 animate-coin delay-300" />
-          </div>
-        )}
+    // =========================
+    // Render（高級ラウンジ：詰め＆小さめ文字）
+    // =========================
+    return (
+      <div className="relative min-h-screen overflow-hidden text-white bg-black">
+        <div className="absolute inset-0 bg-black" />
 
-        {/* 上部ビジュアル */}
-        <div className="h-2/5 relative">
-          <div className="absolute inset-0 bg-black/10" />
-          <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-snack-bg/40" />
-          <div className="absolute bottom-4 left-4">
-            <span className="bg-snack-neon-pink text-white text-xs px-2 py-1 rounded">ON AIR</span>
-          </div>
-        </div>
+        {/* 額縁 */}
+        <div className="absolute inset-3 sm:inset-4 md:inset-6">
+          <div
+            className={[
+              "relative h-full rounded-[26px] overflow-hidden",
+              "border border-white/10",
+              "shadow-[0_24px_80px_rgba(0,0,0,0.65)]",
+              tipEffect ? "ring-2 ring-snack-neon-pink/40 shadow-neon-pink" : "",
+            ].join(" ")}
+          >
+            {/* BG */}
+            <div
+              className="absolute inset-0"
+              style={{
+                backgroundImage: "url('/assets/session.jpg')",
+                backgroundRepeat: "no-repeat",
+                backgroundPosition: "center",
+                backgroundSize: "cover",
+              }}
+            />
+            <div className="absolute inset-0 bg-black/45" />
+            <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/25 to-black/70" />
+            <div className="absolute inset-0 [box-shadow:inset_0_0_140px_rgba(0,0,0,0.78)]" />
 
-        {/* =========================
-            VOICE MODE BAR
-           ========================= */}
-        {isVoice && (
-          <div className="px-6 py-4 bg-black/40 border-y border-white/10">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-xs text-[#E6E0D8]">
-                🎙 音声のみモード / 状態：
-                <span className="text-snack-neon-blue"> {voiceStatusLabel}</span>
-                <div className="text-[11px] text-white/60 mt-1">
-                  ※ iPhone は「音声に入る」を押したタイミングでマイク許可が出ます
+            {/* UI */}
+            <div className="relative z-10 flex h-full min-h-0 flex-col">
+              {/* ===== 上部ヘッダー（小さく） ===== */}
+              <div className="relative shrink-0 h-[14vh] sm:h-[15vh]">
+                <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/30" />
+
+                {/* ON AIR */}
+                <div className="absolute left-4 bottom-3">
+                  <span className="bg-snack-neon-pink/85 text-white text-[10px] px-2 py-1 rounded">
+                    ON AIR
+                  </span>
                 </div>
+
+                {/* ✅ もう帰る：右上に小さく固定 */}
+                <div className="absolute right-3 top-3">
+                  <button
+                    type="button"
+                    onClick={handleLeaveAll}
+                    className="rounded-full border border-white/15 bg-white/10 text-white/75
+                               px-3 py-1.5 text-[12px] font-semibold hover:bg-white/15 active:scale-[0.99]"
+                    aria-label="もう帰る"
+                  >
+                    もう帰る
+                  </button>
+                </div>
+
+                {/* 細線 */}
+                <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-white/12 to-transparent" />
               </div>
 
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={joinVoice}
-                  disabled={voiceStatus === "joining" || voiceStatus === "joined" || !voiceInfo}
-                  className="px-4 py-2 rounded-full text-xs font-semibold bg-snack-neon-blue text-black disabled:opacity-40"
-                >
-                  {voiceStatus === "joined" ? "入室中" : "音声に入る"}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={leaveVoice}
-                  disabled={voiceStatus !== "joined"}
-                  className="px-4 py-2 rounded-full text-xs font-semibold border border-white/25 text-white/80 disabled:opacity-40"
-                >
-                  音声を抜ける
-                </button>
-              </div>
-            </div>
-
-            {!voiceInfo && (
-              <div className="mt-2 text-[11px] text-yellow-200">
-                音声の準備待ちです（サーバから voice.join.ready が届くまで待機）
-              </div>
-            )}
-            {voiceErr && <div className="mt-2 text-[11px] text-red-300 whitespace-pre-wrap">{voiceErr}</div>}
-          </div>
-        )}
-
-        {/* =========================
-            CHAT AREA（textのみ）
-           ========================= */}
-        {isText && (
-          <>
-            <div className="flex-grow p-6 overflow-y-auto space-y-4 bg-black/30 border border-white/10 rounded-2xl mx-4 my-4">
-              <div className="text-center text-xs text-gray-200 my-3">—— ママが入店しました ——</div>
-
-              {messages.map((m) => {
-                if (m.from === "system") {
-                  return (
-                    <div key={m.id} className="flex w-full justify-center">
-                      <span className="text-[13px] text-[#E6E0D8] drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]">
-                        {m.text}
-                      </span>
+              {/* ===== VOICE ===== */}
+              {isVoice ? (
+                <div className="mx-4 mt-4 rounded-2xl border border-white/10 bg-black/35 px-4 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="text-[12px] text-[#E6E0D8] leading-relaxed">
+                      🎙 音声のみモード / 状態：
+                      <span className="text-snack-neon-blue"> {voiceStatusLabel}</span>
+                      <div className="text-[11px] text-white/60 mt-1">
+                        ※ iPhone は「再接続」を押したタイミングでマイク許可が出ます
+                      </div>
                     </div>
-                  );
-                }
 
-                const isMama = m.from === "mama";
-                return (
-                  <div key={m.id} className={`flex w-full ${isMama ? "justify-start" : "justify-end"}`}>
-                    <div
-                      className={`bubble-in max-w-[80%] px-4 py-3 rounded-2xl text-[17px] leading-[1.8] ${
-                        isMama
-                          ? "bg-black/45 text-[#F4EBDD] drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] rounded-tl-none"
-                          : "ml-auto bg-[#f1e6d6] text-[#2b1c12] shadow-[0_4px_14px_rgba(0,0,0,0.25)] rounded-tr-none"
-                      }`}
-                    >
-                      {m.text}
+                    <div className="flex gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={joinVoice}
+                        disabled={voiceStatus === "joining" || voiceStatus === "joined" || !voiceInfo}
+                        className="px-3 py-2 rounded-full text-[12px] font-semibold bg-snack-neon-blue text-black disabled:opacity-40"
+                      >
+                        {voiceStatus === "joined" ? "通話中" : "再接続"}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={leaveVoice}
+                        disabled={voiceStatus !== "joined"}
+                        className="px-3 py-2 rounded-full text-[12px] font-semibold border border-white/25 text-white/80 disabled:opacity-40"
+                      >
+                        退出
+                      </button>
                     </div>
                   </div>
-                );
-              })}
-            </div>
 
-            <footer className="p-4 bg-snack-bg border-t border-snack-brown">
-              <div className="flex gap-2 mb-3">
-                <button
-                  type="button"
-                  onClick={handleCheers}
-                  className="flex-1 bg-yellow-900/40 border border-yellow-600 text-yellow-200 py-2 rounded-full text-sm"
-                >
-                  🍸 乾杯
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConsult}
-                  className="flex-1 bg-snack-neon-blue/20 border border-snack-neon-blue text-snack-neon-blue py-2 rounded-full text-sm"
-                >
-                  相談
-                </button>
-                <button
-                  type="button"
-                  onClick={handleTip}
-                  className="flex-1 bg-snack-neon-pink/10 border border-snack-neon-pink text-snack-neon-pink py-2 rounded-full text-sm"
-                >
-                   チップ
-                </button>
-              </div>
+                  {!voiceInfo ? (
+                    <div className="mt-2 text-[11px] text-yellow-200">
+                      音声の準備待ちです（session.started に voiceInfo が乗るまで待機）
+                    </div>
+                  ) : null}
 
-              <div className="flex justify-end mb-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (leaveSoundRef.current) {
-                      try {
-                        leaveSoundRef.current.currentTime = 0;
-                        leaveSoundRef.current.play();
-                      } catch (e) {
-                        console.warn("leave sound play error", e);
+                  {voiceErr ? (
+                    <div className="mt-2 text-[11px] text-red-300 whitespace-pre-wrap">{voiceErr}</div>
+                  ) : null}
+
+                  <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-[12px] text-white/70 leading-relaxed">
+                    上の「再接続」を押すだけで開始できます。失敗したらマイク許可を確認してね。
+                  </div>
+                </div>
+              ) : null}
+
+              {/* ===== TEXT ===== */}
+              {isText ? (
+                <>
+                  {/* チャット欄：余白を詰めて文字も小さめ */}
+                  <div className="flex-1 min-h-0 mx-4 mt-4 mb-3 rounded-2xl border border-white/10 bg-black/28 p-4 overflow-y-auto overscroll-contain space-y-3">
+                    <div className="text-center text-[11px] text-white/60 my-1">
+                      —— ママが入店しました ——
+                    </div>
+
+                    {messages.map((m) => {
+                      if (m.from === "system") {
+                        return (
+                          <div key={m.id} className="flex w-full justify-center">
+                            <span className="text-[12px] text-[#E6E0D8] drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]">
+                              {m.text}
+                            </span>
+                          </div>
+                        );
                       }
-                    }
-                    window.setTimeout(() => onLeave?.(), 900);
-                  }}
-                  className="px-3 py-1 rounded-full border border-gray-600 text-[11px] text-gray-300 hover:bg-gray-800 transition-colors"
-                >
-                  もう帰る
-                </button>
-              </div>
 
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="メッセージを入力..."
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  className="flex-grow bg-black/50 border border-snack-brown rounded-full px-4 py-2 text-sm focus:outline-none focus:border-snack-neon-pink"
-                />
-                <button
-                  type="button"
-                  onClick={handleSend}
-                  className="bg-snack-neon-pink p-2 rounded-full w-10 h-10 flex items-center justify-center shadow-neon-pink active:scale-95 transition-transform"
-                >
-                  ▶
-                </button>
-              </div>
-            </footer>
-          </>
-        )}
+                      const isMama = m.from === "mama";
+                      return (
+                        <div key={m.id} className={`flex w-full ${isMama ? "justify-start" : "justify-end"}`}>
+                          <div
+                            className={`max-w-[82%] px-3 py-2 rounded-2xl text-[14px] leading-[1.6] ${
+                              isMama
+                                ? "bg-black/45 text-[#F4EBDD] drop-shadow-[0_2px_4px_rgba(0,0,0,0.55)] rounded-tl-none"
+                                : "ml-auto bg-[#f1e6d6] text-[#2b1c12] shadow-[0_4px_14px_rgba(0,0,0,0.22)] rounded-tr-none"
+                            }`}
+                          >
+                            {m.text}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
 
-        {/* voiceモード：チャットUIは出さない */}
-        {isVoice && (
-          <div className="flex-1 flex items-center justify-center text-xs text-white/70 px-6">
-            音声のみモードです。上の「音声に入る」から通話を開始してください。
-          </div>
-        )}
+                  {/* 下部操作：コンパクト */}
+                  <footer className="mx-4 mb-4 rounded-2xl border border-white/10 bg-black/32 p-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
+                    <div className="flex gap-2 mb-2">
+                      <button
+                        type="button"
+                        onClick={handleCheers}
+                        className="flex-1 bg-yellow-900/30 border border-yellow-600/55 text-yellow-200 py-2 rounded-full text-[12px]"
+                      >
+                        🍸 乾杯
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleConsult}
+                        className="flex-1 bg-snack-neon-blue/12 border border-snack-neon-blue/55 text-snack-neon-blue py-2 rounded-full text-[12px]"
+                      >
+                        相談
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleTip}
+                        className="flex-1 bg-snack-neon-pink/10 border border-snack-neon-pink/55 text-snack-neon-pink py-2 rounded-full text-[12px]"
+                      >
+                        チップ
+                      </button>
+                    </div>
 
-        {/* モード不明 */}
-        {!isText && !isVoice && (
-          <div className="p-6 text-xs text-yellow-200">
-            sessionInfo.mode が不明です。サーバの session.started に mode を含めてください。
-          </div>
-        )}
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="メッセージを入力..."
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        className="flex-grow bg-black/45 border border-white/15 rounded-full px-4 py-2 text-[13px] focus:outline-none focus:border-snack-neon-pink/80"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSend}
+                        className="bg-snack-neon-pink/90 rounded-full w-10 h-10 flex items-center justify-center shadow-neon-pink active:scale-95 transition-transform"
+                        aria-label="送信"
+                      >
+                        ▶
+                      </button>
+                    </div>
+                  </footer>
+                </>
+              ) : null}
 
-        {/* Tip modal（textのみ） */}
-        {isText && tipOpen && (
-          <div className="absolute inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#1c1715]/95 p-4 shadow-xl">
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-sm text-snack-text">チップの金額を選んでね</div>
-                <button
-                  type="button"
-                  onClick={() => (tipLoading ? null : setTipOpen(false))}
-                  className="text-xs text-gray-300 px-2 py-1 rounded-full border border-gray-600"
-                >
-                  閉じる
-                </button>
-              </div>
+              {/* 想定外 */}
+              {!isText && !isVoice ? (
+                <div className="p-6 text-[12px] text-yellow-200">
+                  sessionInfo.mode が不明です。サーバの session.started に mode を含めてください。
+                </div>
+              ) : null}
 
-              <div className="grid grid-cols-3 gap-2">
-                {TIP_OPTIONS.map((a) => (
-                  <button
-                    key={a}
-                    type="button"
-                    disabled={tipLoading}
-                    onClick={() => startTipPayment(a)}
-                    className="py-3 rounded-xl border border-snack-neon-pink/40 bg-snack-neon-pink/10 text-snack-neon-pink text-sm active:scale-95 transition-transform disabled:opacity-60"
-                  >
-                    ¥{a}
-                  </button>
-                ))}
-              </div>
+              {/* Tip modal（textのみ） */}
+              {isText && tipOpen ? (
+                <div className="absolute inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm p-4 pb-[calc(16px+env(safe-area-inset-bottom))]">
+                  <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#1c1715]/95 p-4 shadow-xl">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="text-sm text-snack-text">チップの金額を選んでね</div>
+                      <button
+                        type="button"
+                        onClick={() => (tipLoading ? null : setTipOpen(false))}
+                        className="text-xs text-gray-300 px-2 py-1 rounded-full border border-gray-600"
+                      >
+                        閉じる
+                      </button>
+                    </div>
 
-              <div className="mt-3 text-[11px] text-gray-400">※ お支払い画面（PayPay等）に移動します</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {TIP_OPTIONS.map((a) => (
+                        <button
+                          key={a}
+                          type="button"
+                          disabled={tipLoading}
+                          onClick={() => startTipPayment(a)}
+                          className="py-3 rounded-xl border border-snack-neon-pink/40 bg-snack-neon-pink/10 text-snack-neon-pink text-sm active:scale-95 transition-transform disabled:opacity-60"
+                        >
+                          ¥{a}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="mt-3 text-[11px] text-gray-400">※ お支払い画面（PayPay等）に移動します</div>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
-        )}
+        </div>
       </div>
-    </div>
-  );
-};
-
-export default SessionRoom;
+    );
+}

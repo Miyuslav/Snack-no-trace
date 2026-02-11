@@ -1,66 +1,126 @@
-import React, { useState, useEffect, useRef } from 'react';
-import TopSelection from './components/TopSelection';
-import WaitingRoom from './components/WaitingRoom';
-import SessionRoom from './components/SessionRoom';
-import MamaConsole from './components/MamaConsole';
-import { getSocket } from "./socket";
-import { createUUID } from './utils/uuid';
+// frontend/src/VirtualSnackApp.jsx
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import MamaConsole from "./components/MamaConsole";
 
+import TopSelection from "./components/TopSelection.jsx";
+import WaitingRoom from "./components/WaitingRoom.jsx";
+import SessionRoom from "./components/SessionRoom.jsx";
 
-const VirtualSnackApp = () => {
+import { getSocket } from "./socket.js";
+
+export default function VirtualSnackApp() {
   const location = useLocation();
-  const navigate = useNavigate(); // ★ これを追加
 
-  // ★ /mama ではゲストアプリを完全停止
-  if (location.pathname.startsWith("/mama")) {
-    return null;
+  // ✅ まず window の search を優先（router都合で空になる事故を避ける）
+  const roleParam = useMemo(() => {
+    const qs = new URLSearchParams(window.location.search);
+    return qs.get("role");
+  }, [location.key]); // location変化で再評価
+
+  const role = useMemo(() => {
+    const saved = localStorage.getItem("snack_role") || "guest";
+    const r = roleParam || saved || "guest";
+    return r === "mama" ? "mama" : "guest";
+  }, [roleParam]);
+
+  useEffect(() => {
+    if (roleParam) localStorage.setItem("snack_role", roleParam);
+  }, [roleParam]);
+
+  console.log("[ROLE DEBUG]", { roleParam, role, href: window.location.href });
+
+  if (role === "mama") return <MamaConsole />;
+  return <GuestApp />;
+}
+
+function GuestApp() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const MAMA_ROOM_ID = import.meta.env.VITE_MAMA_ROOM_ID || "room_mama_fixed";
+  const GUEST_ID_KEY = "snack_guest_id";
+
+  // ✅ guestId を必ず用意（再接続・決済紐付けのため）
+  const getOrCreateGuestId = () => {
+   try {
+    const existing = localStorage.getItem(GUEST_ID_KEY);
+    if (existing) return existing;
+
+    const id = `guest_${crypto.randomUUID()}`;
+    localStorage.setItem(GUEST_ID_KEY, id);
+    return id;
+  } catch {
+    return `guest_${crypto.randomUUID()}`;
   }
+};
 
-  // ✅ ゲスト用 socket はここで1回だけ作る
+  // ✅ 1回だけ
   const socketRef = useRef(null);
-  if (!socketRef.current) {
-    socketRef.current = getSocket("guest");
-  }
+  if (!socketRef.current) socketRef.current = getSocket("guest");
   const socket = socketRef.current;
-  const STEP_KEY = "snack_step";
 
-  const [step, setStep] = useState(() => {
-    return window.localStorage.getItem(STEP_KEY) || "TOP";
+  const [sessionInfo, setSessionInfo] = useState(() => {
+    try {
+      return {
+        mood: localStorage.getItem("last_mood") || "",
+        mode: localStorage.getItem("last_mode") || "",
+      };
+    } catch {
+      return { mood: "", mode: "" };
+    }
   });
 
+  // ✅ join は “connect毎に1回”
+  const joinedSocketIdRef = useRef(null);
   useEffect(() => {
-    window.localStorage.setItem(STEP_KEY, step);
-  }, [step]);
+    if (!socket) return;
 
-  const [sessionInfo, setSessionInfo] = useState({ mood: "", mode: "" ,roomId: ""});
+    const joinOnce = () => {
+      if (!socket.id) return;
+      if (joinedSocketIdRef.current === socket.id) return;
+      joinedSocketIdRef.current = socket.id;
 
-  // ✅ roomId固定
-  const [roomId] = useState(() => {
-    const key = 'snack_room_id';
-    const existing = window.localStorage.getItem(key);
-    const rid = existing || `room_${createUUID()}`;
-    window.localStorage.setItem(key, rid);
-    return rid;
-  });
+      socket.emit("join_room", { roomId: MAMA_ROOM_ID });
+      console.log("[guest] join_room", socket.id, MAMA_ROOM_ID);
+    };
+
+    const onConnect = () => joinOnce();
+    const onDisconnect = () => (joinedSocketIdRef.current = null);
+
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    if (socket.connected) joinOnce();
+
+    return () => {
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+    };
+  }, [socket, MAMA_ROOM_ID]);
 
   useEffect(() => {
-    socket.emit("join_room", { roomId });
+    if (!socket) return;
 
     const onSessionStarted = (payload) => {
       console.log("[guest] session.started", payload);
+      try {
+        if (payload?.mood) localStorage.setItem("last_mood", payload.mood);
+        if (payload?.mode) localStorage.setItem("last_mode", payload.mode);
+      } catch {}
+
       setSessionInfo((prev) => ({
         ...prev,
-        mood: payload.mood ?? prev.mood,
-        mode: payload.mode ?? prev.mode,
-        roomId: payload.roomId ?? prev.roomId ?? roomId,
+        mood: payload?.mood ?? prev.mood,
+        mode: payload?.mode ?? prev.mode,
+        voiceInfo: payload?.voiceInfo || null, // ✅ voiceInfo を受け取るならここで保持
       }));
-      setStep("SESSION");
+
+      navigate("/session", { replace: true });
     };
 
     const onSessionEnded = ({ reason }) => {
-      console.log("[session.ended]", reason);
-      setStep("TOP");
+      console.log("[guest] session.ended", reason);
+      navigate("/", { replace: true });
     };
 
     socket.on("session.started", onSessionStarted);
@@ -70,107 +130,47 @@ const VirtualSnackApp = () => {
       socket.off("session.started", onSessionStarted);
       socket.off("session.ended", onSessionEnded);
     };
-  }, [socket, roomId]);
-
-  const enterSoundRef = useRef(null);
-
-  useEffect(() => {
-    const a = new Audio('/door.mp3');
-    a.volume = 0.28;
-    enterSoundRef.current = a;
-  }, []);
-
-  // ✅ 接続/再接続のたび join_room（ルート無関係で常に）
-  useEffect(() => {
-    const rejoin = () => {
-      socket.emit('join_room', { roomId });
-      console.log('[rejoin] join_room', roomId);
-    };
-
-    socket.on('connect', rejoin);
-    rejoin();
-
-    return () => socket.off('connect', rejoin);
-  }, [roomId]);
-
-  // ✅ session started/ended → URL遷移
-  useEffect(() => {
-    const onStarted = (payload) => {
-      console.log('[session.started]', payload);
-      enterSoundRef.current?.play().catch(() => {});
-      navigate('/session', { replace: true });
-    };
-
-    const onEnded = () => {
-      console.log('[session.ended]');
-    };
-
-    socket.on('session.started', onStarted);
-    socket.on('session.ended', onEnded);
-
-    return () => {
-      socket.off('session.started', onStarted);
-      socket.off('session.ended', onEnded);
-    };
-  }, [navigate]);
+  }, [socket, navigate]);
 
   const handleEnter = (mood, mode) => {
-    console.log('[APP] handleEnter called', { mood, mode, t: Date.now() });
     setSessionInfo({ mood, mode });
 
-    // ✅ URLをWAITINGへ
-    navigate('/waiting');
+    try {
+      if (mood) localStorage.setItem("last_mood", mood);
+      if (mode) localStorage.setItem("last_mode", mode);
+    } catch {}
 
-    // 音声アンロック（iOS対策）
-    const a = enterSoundRef.current;
-    if (a) {
-      try {
-        a.muted = true;
-        a.play()
-          .then(() => {
-            a.pause();
-            a.currentTime = 0;
-            a.muted = false;
-          })
-          .catch(() => {});
-      } catch {}
-    }
+    const guestId = getOrCreateGuestId();
 
-    socket.emit('guest.register', { mood, mode });
+    socket.emit("guest.register", {
+      guestId,
+      mood,
+      mode,
+      roomId: MAMA_ROOM_ID, // 固定部屋でOK
+    });
+
+    navigate("/waiting", { replace: true });
   };
 
   const handleLeave = () => {
-    socket.emit('guest.leave');
-    navigate('/done', { replace: true });
+    socket.emit("guest.leave");
+    navigate("/", { replace: true });
   };
 
-  // ✅ ルートで表示を切り替える
   const path = location.pathname;
-
-  if (path === '/done') {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-snack-bg text-snack-text">
-        <button onClick={() => navigate('/', { replace: true })}>トップに戻る</button>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-snack-bg text-snack-text font-snack relative overflow-hidden">
-      <div className="pointer-events-none absolute inset-0 bg-noise opacity-[0.06] mix-blend-overlay" />
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/15 to-black/35" />
-
       <div className="relative max-w-md mx-auto min-h-screen border-x border-snack-panel">
-        {path === '/' && <TopSelection onEnter={handleEnter} />}
-        {path === '/waiting' && (
-          <WaitingRoom sessionInfo={sessionInfo} onCancel={handleLeave} />
+        {path === "/" && <TopSelection onEnter={handleEnter} />}
+        {path === "/waiting" && (
+          <WaitingRoom sessionInfo={sessionInfo} onCancel={handleLeave} socket={socket} />
         )}
-        {path === '/session' && (
-          <SessionRoom sessionInfo={sessionInfo} roomId={roomId} onLeave={handleLeave} socket={socket}/>
+        {path === "/session" && (
+          <SessionRoom sessionInfo={sessionInfo} onLeave={handleLeave} socket={socket} />
         )}
       </div>
     </div>
   );
-};
-
-export default VirtualSnackApp;
+}
+f
