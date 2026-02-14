@@ -79,17 +79,22 @@ function isAllowedOrigin(origin) {
 const io = new Server(server, {
   path: "/socket.io",
   cors: {
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      return cb(null, isAllowedOrigin(origin));
+      origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
+      credentials: true,
+      methods: ["GET", "POST", "OPTIONS"],
     },
-    credentials: true,
-    methods: ["GET", "POST", "OPTIONS"],
-  },
-  transports: ["polling", "websocket"],
-  pingInterval: 25000,
-  pingTimeout: 120000,
-});
+    transports: ["polling", "websocket"],
+    pingInterval: 25000,
+    pingTimeout: 120000,
+  });
+
+  // Express CORS（保険）
+  app.use(
+    cors({
+      origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
+      credentials: true,
+    })
+  );
 
 // =========================
 // 状態管理
@@ -321,13 +326,39 @@ app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), (req,
 // 通常の JSON は webhook の後
 app.use(express.json());
 
-// CORS（保険）
-app.use(
-  cors({
-    origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
-    credentials: true,
-  })
-);
+// =========================
+// CORS / Allowed origins
+// =========================
+
+// 本番フロントURL（例: https://virtual-snack.vercel.app）
+const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || "").replace(/\/$/, "");
+
+// 開発用（ローカル）
+const DEV_ORIGINS = new Set([
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://192.168.1.223:5173",
+]);
+
+// 本番で許可する origin（FRONTEND_ORIGIN だけ）
+function isAllowedOrigin(origin) {
+  if (!origin) return true; // curl/healthなど
+
+  // ✅ 本番：FRONTEND_ORIGIN と一致のみ許可
+  if (FRONTEND_ORIGIN && origin === FRONTEND_ORIGIN) return true;
+
+  // ✅ 開発：ローカルのみ許可
+  if (DEV_ORIGINS.has(origin)) return true;
+
+  // ✅ 開発で ngrok を使うならここだけ許可（本番運用では消してOK）
+  try {
+    const u = new URL(origin);
+    if (u.hostname.endsWith("ngrok-free.dev")) return true;
+  } catch {}
+
+  return false;
+}
+
 
 // Health
 app.get("/health", (req, res) => res.json({ ok: true }));

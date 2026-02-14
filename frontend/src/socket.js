@@ -3,7 +3,7 @@ import { io } from "socket.io-client";
 
 const BACKEND =
   import.meta.env.VITE_SOCKET_URL ||
-  `${window.location.protocol}//${window.location.hostname}:4000`;
+  "https://backend-dark-violet-924.fly.dev";
 
 const cache = new Map();
 
@@ -12,9 +12,9 @@ export function getSocket(role) {
 
   const s = io(BACKEND, {
     path: "/socket.io",
-    transports: role === "mama" ? ["websocket"] : ["websocket", "polling"],
+    transports: ["websocket", "polling"],
     withCredentials: true,
-    auth: { role },
+    query: { role },
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 500,
