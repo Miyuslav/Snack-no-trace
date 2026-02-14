@@ -81,6 +81,8 @@ function GuestApp() {
       if (joinedSocketIdRef.current === socket.id) return;
       joinedSocketIdRef.current = socket.id;
 
+      const guestId = getOrCreateGuestId(); // これが超重要
+
       socket.emit("join_room", { roomId: MAMA_ROOM_ID });
       console.log("[guest] join_room", socket.id, MAMA_ROOM_ID);
     };

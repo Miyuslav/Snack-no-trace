@@ -11,6 +11,7 @@ import { getOrCreateGuestId } from "./utils/guestId.js";
 export default function GuestApp() {
   const location = useLocation();
   const navigate = useNavigate();
+  const registeredRef = useRef(false);
 
   const MAMA_ROOM_ID = useMemo(
     () => import.meta.env.VITE_MAMA_ROOM_ID || "room_mama_fixed",
@@ -65,37 +66,44 @@ export default function GuestApp() {
 
   // ✅ join_room（socket.id 単位で1回だけ）
   const joinedSocketIdRef = useRef(null);
+  // ✅ join_room（シンプル安定版）
   useEffect(() => {
     if (!socket) return;
 
-    const joinOncePerSocketId = () => {
-      if (!socket.id) return;
-      if (joinedSocketIdRef.current === socket.id) return;
-      joinedSocketIdRef.current = socket.id;
+    const onConnect = () => {
+      console.log("[guest] connected", socket.id);
 
       socket.emit("join_room", { roomId: MAMA_ROOM_ID });
       console.log("[guest] join_room", socket.id, MAMA_ROOM_ID);
     };
 
-    const onConnect = () => {
-      console.log("[guest] connected", socket.id, { guestId });
-      joinOncePerSocketId();
-    };
-
-    const onDisconnect = (reason) => {
-      console.log("[guest] disconnected", socket.id, reason);
-      joinedSocketIdRef.current = null;
-    };
-
     socket.on("connect", onConnect);
-    socket.on("disconnect", onDisconnect);
-    if (socket.connected) joinOncePerSocketId();
+
+    if (socket.connected) {
+      socket.emit("join_room", { roomId: MAMA_ROOM_ID });
+    }
 
     return () => {
       socket.off("connect", onConnect);
-      socket.off("disconnect", onDisconnect);
     };
-  }, [socket, MAMA_ROOM_ID, guestId]);
+  }, [socket, MAMA_ROOM_ID]);
+
+
+　// 🔥 disconnect時に registerガード解除
+ useEffect(() => {
+   if (!socket) return;
+
+   const onDisconnect = (reason) => {
+     console.log("[guest] disconnected → reset register flag", reason);
+     registeredRef.current = false;
+   };
+
+   socket.on("disconnect", onDisconnect);
+
+   return () => {
+     socket.off("disconnect", onDisconnect);
+   };
+ }, [socket]);
 
   // session started/ended → 画面遷移
   useEffect(() => {
@@ -124,6 +132,7 @@ export default function GuestApp() {
     };
 
     const onSessionEnded = ({ reason }) => {
+        hasRegisteredRef.current = false;
       console.log("[guest] session.ended", reason);
       navigate("/", { replace: true });
     };
@@ -141,30 +150,61 @@ export default function GuestApp() {
     (mood, mode) => {
       setSessionInfo({ mood, mode, voiceInfo: null, voiceError: "" });
 
-      try {
-        if (mood) localStorage.setItem("last_mood", mood);
-        if (mode) localStorage.setItem("last_mode", mode);
-      } catch {}
-
-      // ✅ iOS: ここが「クリック1回」音声アンロックの根拠
       unlockAudio();
-
       navigate("/waiting", { replace: true });
 
-      // ✅ ここが “必ずguestIdを送る” 固定ポイント（触らない）
-      socket.emit("guest.register", {
+      if (socket?.connected) {
+        socket.emit("guest.register", {
+          guestId,
+          mood,
+          mode,
+          roomId: MAMA_ROOM_ID,
+        });
+
+        console.log("🔥 guest.register", socket.id);
+      } else {
+        console.log("⚠️ socket not connected yet");
+      }
+    },
+    [guestId, MAMA_ROOM_ID, navigate, socket, unlockAudio]
+  );
+
+  // ✅ waiting に入ったら必ず register（iPhone/初回接続の取りこぼし対策）
+  const hasRegisteredRef = useRef(false);
+
+  useEffect(() => {
+    if (!socket) return;
+    if (location.pathname !== "/waiting") return;
+
+    const mood = sessionInfo?.mood;
+    const mode = sessionInfo?.mode;
+    if (!mood || !mode) return;
+
+    const send = () => {
+      if (!socket.id) return;
+      if (hasRegisteredRef.current) return;
+
+      socket.emit("guest.register", { guestId, mood, mode, roomId: MAMA_ROOM_ID });
+      console.log("[guest] guest.register (waiting auto)", {
+        socketId: socket.id,
         guestId,
         mood,
         mode,
         roomId: MAMA_ROOM_ID,
       });
 
-      console.log("[guest] emit guest.register", { guestId, mood, mode, roomId: MAMA_ROOM_ID, socketId: socket?.id });
-    },
-    [guestId, MAMA_ROOM_ID, navigate, socket, unlockAudio]
-  );
+      hasRegisteredRef.current = true;
+    };
+
+    socket.on("connect", send);
+    if (socket.connected) send();
+
+    return () => socket.off("connect", send);
+  }, [socket, location.pathname, sessionInfo?.mood, sessionInfo?.mode, guestId, MAMA_ROOM_ID]);
+
 
   const handleLeave = useCallback(() => {
+      hasRegisteredRef.current = false;
     socket.emit("guest.leave");
     navigate("/", { replace: true });
   }, [socket, navigate]);
@@ -172,11 +212,11 @@ export default function GuestApp() {
   const path = location.pathname;
 
   return (
-    <div className="min-h-screen bg-snack-bg text-snack-text font-snack relative overflow-hidden">
+    <div className="min-h-[var(--app-height)] bg-snack-bg text-snack-text font-snack relative">
       <div className="pointer-events-none absolute inset-0 bg-noise opacity-[0.06] mix-blend-overlay" />
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/15 to-black/35" />
 
-      <div className="relative max-w-md mx-auto min-h-screen border-x border-snack-panel">
+      <div className="relative max-w-md mx-auto min-h-[var(--app-height)] border-x border-snack-panel flex flex-col">
         {path === "/" && <TopSelection onEnter={handleEnter} />}
 
         {path === "/waiting" && (
@@ -188,5 +228,6 @@ export default function GuestApp() {
         )}
       </div>
     </div>
+
   );
 }

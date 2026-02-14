@@ -187,127 +187,76 @@ async function createDailyMeetingToken({ userName, isOwner }) {
 // Session start（Policy A: session.startedにvoiceInfo）
 // =========================
 async function startSessionWithGuest({ guestId, guestSocketId }) {
-  if (activeSession) {
-    console.log("Session already active, cannot start new one.");
-    return;
-  }
+   if (activeSession) return;
 
-  const guestInfo = guests.get(guestSocketId);
-  const guestSocket = io.sockets.sockets.get(guestSocketId);
+   const sid = socketIdByGuestId.get(guestId) || guestSocketId; // ✅最新
+   const guestInfo = guests.get(sid);
+   const guestSocket = io.sockets.sockets.get(sid);
+   if (!guestInfo || !guestSocket) return;
 
-  console.log("[startSessionWithGuest] guestInfo", guestSocketId, guestInfo);
-  console.log("[startSessionWithGuest] guestSocket exists?", !!guestSocket);
+   // キューから外す
+   waitingOrder = waitingOrder.filter((id) => id !== sid);
 
-  if (!guestInfo || !guestSocket) {
-    console.log("Guest not found for session start:", guestSocketId);
-    return;
-  }
+   // guest状態
+   guestInfo.status = "active";
+   guests.set(sid, guestInfo);
 
-  waitingOrder = waitingOrder.filter((id) => id !== guestSocketId);
+   const startedAt = Date.now();
 
-  guestInfo.status = "active";
-  guests.set(guestSocketId, guestInfo);
+   // voice token (省略: そのまま sid を使う)
+   let voiceInfoForGuest = null;
+   let voiceInfoForMama = null;
+   if (guestInfo.mode === "voice") { /* そのまま */ }
 
-  const startedAt = Date.now();
+   const timeoutId = setTimeout(() => endActiveSession("timeout"), SESSION_MAX_MS);
 
-  // ✅ voice のときだけ先に Daily token を作る（Policy A）
-  let voiceInfoForGuest = null;
-  let voiceInfoForMama = null;
+   const warningTimeoutId = setTimeout(() => {
+     const gSocket = io.sockets.sockets.get(sid); // ✅sid
+     if (gSocket) gSocket.emit("session.warning");
+     if (mamaSocket) mamaSocket.emit("session.warning", { guestSocketId: sid });
+   }, Math.max(1000, SESSION_MAX_MS - WARNING_BEFORE_MS));
 
-  if (guestInfo.mode === "voice") {
-    try {
-      const guestDaily = await createDailyMeetingToken({
-        userName: `guest_${guestSocketId.slice(0, 6)}`,
-        isOwner: false,
-      });
-      const mamaDaily = await createDailyMeetingToken({
-        userName: "mama",
-        isOwner: true,
-      });
+   activeSession = {
+     guestId,
+     guestSocketId: sid,          // ✅sid
+     roomId: guestInfo.roomId || null,
+     startedAt,
+     timeoutId,
+     warningTimeoutId,
+     graceTimeoutId: null,
+     payingGraceTimeoutId: null,
+     daily: voiceInfoForGuest && voiceInfoForMama ? { /* そのまま */ } : null,
+   };
 
-      voiceInfoForGuest = { roomUrl: guestDaily.roomUrl, token: guestDaily.token };
-      voiceInfoForMama = { roomUrl: mamaDaily.roomUrl, token: mamaDaily.token };
-    } catch (e) {
-      console.error("[Daily token] failed", e);
-    }
-  }
+   console.log("[SESSION START]", { guestSocketId: sid, startedAt });
 
-  const timeoutId = setTimeout(() => endActiveSession("timeout"), SESSION_MAX_MS);
+   guestSocket.emit("session.started", {
+     guestSocketId: sid,          // ✅sid
+     mood: guestInfo.mood,
+     mode: guestInfo.mode,
+     roomId: guestInfo.roomId || null,
+     startedAt,
+     maxMs: SESSION_MAX_MS,
+     resumed: false,
+     ...(voiceInfoForGuest ? { voiceInfo: voiceInfoForGuest } : {}),
+   });
 
-  const warningTimeoutId = setTimeout(() => {
-    const gSocket = io.sockets.sockets.get(guestSocketId);
-    if (gSocket) gSocket.emit("session.warning");
-    if (mamaSocket) mamaSocket.emit("session.warning", { guestSocketId });
-    console.log("[SESSION WARNING]", { guestSocketId });
-  }, Math.max(1000, SESSION_MAX_MS - WARNING_BEFORE_MS));
+   if (mamaSocket) {
+     mamaSocket.emit("session.started", {
+       guestSocketId: sid,        // ✅sid
+       mood: guestInfo.mood,
+       mode: guestInfo.mode,
+       roomId: guestInfo.roomId || null,
+       startedAt,
+       maxMs: SESSION_MAX_MS,
+       resumed: false,
+       ...(voiceInfoForMama ? { voiceInfo: voiceInfoForMama } : {}),
+     });
+   }
 
-  activeSession = {
-    guestId,
-    guestSocketId,
-    roomId: guestInfo?.roomId || null,
-    startedAt,
-    timeoutId,
-    warningTimeoutId,
-    graceTimeoutId: null,
-    payingGraceTimeoutId: null,
-    daily:
-      voiceInfoForGuest && voiceInfoForMama
-        ? {
-            roomUrl: voiceInfoForGuest.roomUrl,
-            guestToken: voiceInfoForGuest.token,
-            mamaToken: voiceInfoForMama.token,
-          }
-        : null,
-  };
+   broadcastQueueToMama();
+ }
 
-  console.log("[SESSION START]", { guestSocketId, startedAt });
-
-  // ✅ guestへ（Policy A）
-  guestSocket.emit("session.started", {
-    guestSocketId,
-    mood: guestInfo.mood,
-    mode: guestInfo.mode,
-    roomId: guestInfo.roomId || null,
-    startedAt,
-    maxMs: SESSION_MAX_MS,
-    resumed: false,
-    ...(voiceInfoForGuest ? { voiceInfo: voiceInfoForGuest } : {}),
-    ...(guestInfo.mode === "voice" && !voiceInfoForGuest
-      ? { voiceError: "音声の準備に失敗しました" }
-      : {}),
-  });
-
-  // ✅ mamaへ（Policy A）
-  if (mamaSocket) {
-    mamaSocket.emit("session.started", {
-      guestSocketId,
-      mood: guestInfo.mood,
-      mode: guestInfo.mode,
-      roomId: guestInfo.roomId || null,
-      startedAt,
-      maxMs: SESSION_MAX_MS,
-      resumed: false,
-      ...(voiceInfoForMama ? { voiceInfo: voiceInfoForMama } : {}),
-      ...(guestInfo.mode === "voice" && !voiceInfoForMama
-        ? { voiceError: "音声の準備に失敗しました" }
-        : {}),
-    });
-  }
-
-  // ✅ 互換：古いクライアント用（残したい場合だけ）
-  if (voiceInfoForGuest) {
-    guestSocket.emit("voice.join.ready", { ...voiceInfoForGuest, resumed: false });
-  }
-  if (mamaSocket && voiceInfoForMama) {
-    mamaSocket.emit("voice.join.ready", {
-      guestSocketId,
-      ...voiceInfoForMama,
-      resumed: false,
-    });
-  }
-
-  broadcastQueueToMama();
-}
 
 // =========================
 // Express middleware
@@ -591,6 +540,7 @@ io.on("connection", (socket) => {
     const info = guests.get(socket.id) || {};
     guests.set(socket.id, {
       ...info,
+      guestId,
       mood,
       mode,
       roomId: roomId || info.roomId || null,
@@ -619,24 +569,43 @@ io.on("connection", (socket) => {
     });
   });
 
-  // guest.leave
+  // =========================
+  // guest.leave（統一版・これ1つだけ残す）
+  // =========================
   socket.on("guest.leave", () => {
     const guestInfo = guests.get(socket.id);
     if (!guestInfo) return;
 
     console.log("[GUEST LEAVE]", socket.id);
+
+    // キューから除外
     waitingOrder = waitingOrder.filter((id) => id !== socket.id);
 
-    if (activeSession && activeSession.guestSocketId === socket.id) {
+    // ===== セッション中のゲストか？（guestId基準）=====
+    if (activeSession && isActiveGuestSocketId(socket.id)) {
+
+      // 🔥 支払い中は即終了しない
+      if (guestInfo.isPaying) {
+        if (!activeSession.payingGraceTimeoutId) {
+          activeSession.payingGraceTimeoutId = setTimeout(() => {
+            endActiveSession("paying_disconnect_timeout");
+          }, 2 * 60 * 1000);
+        }
+
+        broadcastQueueToMama();
+        return;
+      }
+
+      // 通常の退店
       endActiveSession("guest_left");
       guests.delete(socket.id);
       broadcastQueueToMama();
       return;
     }
 
+    // セッション外
     guests.delete(socket.id);
     broadcastQueueToMama();
-    socket.emit("session.ended", { reason: "guest_left" });
   });
 
   // guest.message
@@ -665,33 +634,6 @@ io.on("connection", (socket) => {
       guests.set(socket.id, g);
     }
     if (mamaSocket) mamaSocket.emit("guest.tip", { at: Date.now(), amount: amount ?? null });
-  });
-
-  socket.on("guest.leave", () => {
-    const guestInfo = guests.get(socket.id);
-    if (!guestInfo) return;
-
-    console.log("[GUEST LEAVE]", socket.id);
-
-    // ✅ ママに必ず通知（蒸発が届かない問題の保険）
-    if (mamaSocket) {
-      mamaSocket.emit("system_message", {
-        text: `（ゲストが退店しました） socket=${socket.id.slice(0, 6)}`,
-      });
-    }
-
-    waitingOrder = waitingOrder.filter((id) => id !== socket.id);
-
-    if (activeSession && isActiveGuestSocketId(socket.id)) {
-      endActiveSession("guest_left");
-      guests.delete(socket.id);
-      broadcastQueueToMama();
-      return;
-    }
-
-    guests.delete(socket.id);
-    broadcastQueueToMama();
-    socket.emit("session.ended", { reason: "guest_left" });
   });
 
   // mama.message（念のため残してるが mamaSocket 以外は弾く）
@@ -754,30 +696,18 @@ io.on("connection", (socket) => {
     });
   });
 
-  // disconnect
   socket.on("disconnect", (reason) => {
     console.log("[disconnect]", socket.id, "role=", role, "reason=", reason);
 
-    // mapping掃除
-    const gid = guestIdBySocketId.get(socket.id);
-    if (gid) {
-      guestIdBySocketId.delete(socket.id);
-      // “最新socketId” が自分なら消す（古い方は残してOK）
-      if (socketIdByGuestId.get(gid) === socket.id) {
-        socketIdByGuestId.delete(gid);
-      }
-    }
-
-    // guest以外はここで終わり
     const guestInfo = guests.get(socket.id);
     if (!guestInfo) return;
 
     waitingOrder = waitingOrder.filter((id) => id !== socket.id);
 
-    if (activeSession && activeSession.guestSocketId === socket.id) {
-      const g = guests.get(socket.id);
+    if (activeSession && isActiveGuestSocketId(socket.id)) {
 
-      if (g?.isPaying) {
+      // 🔥 支払い中
+      if (guestInfo.isPaying) {
         if (!activeSession.payingGraceTimeoutId) {
           activeSession.payingGraceTimeoutId = setTimeout(() => {
             endActiveSession("paying_disconnect_timeout");
@@ -786,6 +716,7 @@ io.on("connection", (socket) => {
         return;
       }
 
+      // 通常 disconnect
       if (!activeSession.graceTimeoutId) {
         activeSession.graceTimeoutId = setTimeout(() => {
           endActiveSession("guest_disconnect_timeout");
@@ -794,11 +725,21 @@ io.on("connection", (socket) => {
       return;
     }
 
+    // セッション外
+    if (guestInfo.isPaying) {
+      setTimeout(() => {
+        if (!io.sockets.sockets.get(socket.id)) {
+          guests.delete(socket.id);
+          broadcastQueueToMama();
+        }
+      }, 2 * 60 * 1000);
+      return;
+    }
+
     guests.delete(socket.id);
     broadcastQueueToMama();
   });
 });
-
 // =========================
 // Start
 // =========================
@@ -819,7 +760,7 @@ function shutdown(signal) {
     console.log("HTTP server closed");
     process.exit(0);
   });
-}
+  }
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGQUIT", () => shutdown("SIGQUIT"));

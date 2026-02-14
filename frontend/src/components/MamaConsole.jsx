@@ -18,7 +18,9 @@ export default function MamaConsole() {
   const MAMA_ROOM_ID = import.meta.env.VITE_MAMA_ROOM_ID || "room_mama_fixed";
 
   // ✅ socket は1回だけ
-  const sock = useMemo(() => getSocket("mama"), []);
+  const sockRef = useRef(null);
+   if (!sockRef.current) sockRef.current = getSocket("mama");
+   const sock = sockRef.current;
 
   // =========================
   // State

@@ -7,6 +7,11 @@ body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
+:root { --app-height: 100vh; }
+@supports (height: 100dvh) {
+  :root { --app-height: 100dvh; }
+}
+
 /* ===== 蒸発ボタン：超ゆったり版 ===== */
 .evaporate-flash {
   position: absolute;

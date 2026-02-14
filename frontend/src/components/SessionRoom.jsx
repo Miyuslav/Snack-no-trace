@@ -242,6 +242,25 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
       handleSend();
     }
   };
+　const footerRef = useRef(null);
+
+ useEffect(() => {
+   const onFocusIn = () => {
+     setTimeout(() => {
+       footerRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+     }, 50);
+   };
+   window.addEventListener("focusin", onFocusIn);
+   return () => window.removeEventListener("focusin", onFocusIn);
+ }, []);
+
+  const bottomRef = useRef(null);
+
+  useEffect(() => {
+    // messages が増えたら最下部へ
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages]);
+
 
   const handleCheers = () => {
     if (!isText) return;
@@ -353,7 +372,7 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
     // Render（高級ラウンジ：詰め＆小さめ文字）
     // =========================
     return (
-      <div className="relative min-h-screen overflow-hidden text-white bg-black">
+      <div className="relative min-h-[var(--app-height)] overflow-hidden text-white bg-black">
         <div className="absolute inset-0 bg-black" />
 
         {/* 額縁 */}
@@ -376,14 +395,14 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
                 backgroundSize: "cover",
               }}
             />
-            <div className="absolute inset-0 bg-black/45" />
-            <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/25 to-black/70" />
-            <div className="absolute inset-0 [box-shadow:inset_0_0_140px_rgba(0,0,0,0.78)]" />
+            <div className="absolute inset-0 bg-black/20" />
+            <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/25 to-black/70" />
+            <div className="absolute inset-0 [box-shadow:inset_0_0_120px_rgba(0,0,0,0.78)]" />
 
             {/* UI */}
             <div className="relative z-10 flex h-full min-h-0 flex-col">
               {/* ===== 上部ヘッダー（小さく） ===== */}
-              <div className="relative shrink-0 h-[14vh] sm:h-[15vh]">
+              <div className="relative shrink-0 h-20 sm:h-24">
                 <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/30" />
 
                 {/* ON AIR */}
@@ -494,10 +513,12 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
                         </div>
                       );
                     })}
+                   <div ref={bottomRef} />
                   </div>
-
                   {/* 下部操作：コンパクト */}
-                  <footer className="mx-4 mb-4 rounded-2xl border border-white/10 bg-black/32 p-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
+                  <footer
+                    ref={footerRef}
+                    className="mx-4 mb-4 rounded-2xl border border-white/10 bg-black/32 p-3 pb-[calc(16px+env(safe-area-inset-bottom))]">
                     <div className="flex gap-2 mb-2">
                       <button
                         type="button"
@@ -529,12 +550,12 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={handleKeyDown}
-                        className="flex-grow bg-black/45 border border-white/15 rounded-full px-4 py-2 text-[13px] focus:outline-none focus:border-snack-neon-pink/80"
+                        className="flex-grow bg-black/45 border border-white/15 rounded-full px-4 py-2 text-[16px] focus:outline-none focus:border-snack-neon-pink/80"
                       />
                       <button
                         type="button"
                         onClick={handleSend}
-                        className="bg-snack-neon-pink/90 rounded-full w-10 h-10 flex items-center justify-center shadow-neon-pink active:scale-95 transition-transform"
+                        className="bg-snack-neon-pink/90 rounded-full shrink-0 w-11 h-11 flex items-center justify-center shadow-neon-pink active:scale-95 transition-transform"
                         aria-label="送信"
                       >
                         ▶

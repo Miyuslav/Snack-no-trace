@@ -12,9 +12,9 @@ export function getSocket(role) {
 
   const s = io(BACKEND, {
     path: "/socket.io",
-    transports: ["websocket", "polling"],
+    transports: role === "mama" ? ["websocket"] : ["websocket", "polling"],
     withCredentials: true,
-    query: { role },
+    auth: { role },
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 500,
