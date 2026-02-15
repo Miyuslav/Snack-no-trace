@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 
-const WaitingRoom = ({ sessionInfo, onCancel, socket }) => {
+export default function WaitingRoom({ sessionInfo, onCancel, socket }) {
   // ===== SFX =====
   const evapSoundRef = useRef(null);
 

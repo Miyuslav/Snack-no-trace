@@ -6,6 +6,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
+  build: {
+      sourcemap: true,
+    },
 
     // ✅ これが本命（ngrok host許可）
     allowedHosts: ["eeliest-lorena-tartly.ngrok-free.dev"],
