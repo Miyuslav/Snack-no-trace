@@ -93,8 +93,11 @@ const io = new Server(server, {
     cors({
       origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
       credentials: true,
+      methods: ["GET", "POST", "OPTIONS"],
     })
   );
+  app.options("*", cors());
+
 
 // =========================
 // 状態管理
@@ -327,87 +330,38 @@ app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), (req,
 app.use(express.json());
 
 // =========================
-// CORS / Allowed origins
+// CORS / Allowed origins（統一版）
 // =========================
-
-// 本番フロントURL（例: https://virtual-snack.vercel.app）
 const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || "").replace(/\/$/, "");
 
-// 開発用（ローカル）
 const DEV_ORIGINS = new Set([
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "http://192.168.1.223:5173",
 ]);
 
-// 本番で許可する origin（FRONTEND_ORIGIN だけ）
 function isAllowedOrigin(origin) {
-  if (!origin) return true; // curl/healthなど
+  if (!origin) return true; // curl/health など
 
-  // ✅ 本番：FRONTEND_ORIGIN と一致のみ許可
+  // ✅ 本番（Vercel）を許可
   if (FRONTEND_ORIGIN && origin === FRONTEND_ORIGIN) return true;
 
-  // ✅ 開発：ローカルのみ許可
+  // ✅ ローカル開発
   if (DEV_ORIGINS.has(origin)) return true;
 
-  // ✅ 開発で ngrok を使うならここだけ許可（本番運用では消してOK）
+  // ✅ ngrok（開発だけ）
   try {
     const u = new URL(origin);
-    if (u.hostname.endsWith("ngrok-free.dev")) return true;
+    if (
+      u.hostname.endsWith("ngrok-free.dev") ||
+      u.hostname.endsWith("ngrok.app") ||
+      u.hostname.endsWith("ngrok.io")
+    ) return true;
   } catch {}
 
   return false;
 }
 
-
-// Health
-app.get("/health", (req, res) => res.json({ ok: true }));
-
-// Checkout Session
-app.post("/api/create-checkout-session", async (req, res) => {
-  try {
-    if (!stripe) return res.status(400).json({ error: "Stripe disabled" });
-
-    const { amount, roomId, socketId } = req.body || {};
-    if (!roomId) return res.status(400).json({ error: "roomId is required" });
-
-    const unitAmount = Number(amount);
-    if (!Number.isInteger(unitAmount) || unitAmount < 50) {
-      return res.status(400).json({ error: "invalid amount" });
-    }
-
-    const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || "").replace(/\/$/, "");
-    if (!FRONTEND_ORIGIN) return res.status(500).json({ error: "FRONTEND_ORIGIN is not set" });
-
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      payment_method_types: ["card", "paypay"],
-      line_items: [
-        {
-          price_data: {
-            currency: "jpy",
-            product_data: { name: "チップ" },
-            unit_amount: unitAmount,
-          },
-          quantity: 1,
-        },
-      ],
-      metadata: {
-        roomId,
-        ...(socketId ? { socketId } : {}),
-      },
-      success_url: `${FRONTEND_ORIGIN}/return?tip=success&roomId=${encodeURIComponent(
-        roomId
-      )}&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${FRONTEND_ORIGIN}/return?tip=cancel&roomId=${encodeURIComponent(roomId)}`,
-    });
-
-    return res.json({ url: session.url });
-  } catch (err) {
-    console.error("[create-checkout-session] error", err);
-    return res.status(500).json({ error: "failed to create checkout session" });
-  }
-});
 
 // =========================
 // Socket.io handlers

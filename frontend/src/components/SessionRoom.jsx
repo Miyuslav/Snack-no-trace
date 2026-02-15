@@ -299,11 +299,17 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
 
   const startTipPayment = useCallback(
     async (amount) => {
+      // =========================
+      // 0) 演出ログ（先に出すのは今のままでOK）
+      // =========================
       const text = `💸 チップ ¥${amount} をはずむ。`;
       addMessage("user", text);
       socket?.emit("guest.message", { text });
       socket?.emit("guest.tip", { amount });
 
+      // =========================
+      // 1) iPhone Safari 判定（今のままでOK）
+      // =========================
       const ua = navigator.userAgent;
       const isIOS =
         /iP(hone|ad|od)/.test(ua) ||
@@ -311,24 +317,159 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
       const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|Android/.test(ua);
       const isIPhoneSafari = isIOS && isSafari;
 
+      // =====================================================
+      // 2) API ベースURL（Vercel→Fly 404対策）
+      //    - Vercelに VITE_API_URL=https://backend-xxx.fly.dev を設定
+      // =====================================================
+
+      // ✅ API_BASE を必ず決める（相対パス /api/... にしない）
+      const API_BASE =
+        import.meta.env.VITE_API_URL ||
+        `${window.location.protocol}//${window.location.hostname}:4000`;
+
+      // ✅ Tip 決済開始（Checkout URL を受け取って遷移）
+      const startTipPayment = useCallback(
+        async (amount) => {
+          setTipLoading(true);
+
+          try {
+            // ✅ roomId は固定（localStorageから拾う保険も入れるならここ）
+            const ridSafe = rid || localStorage.getItem("snack_room_id") || "";
+
+            if (!ridSafe) {
+              addMessage("system", "roomId が無いので決済できません");
+              return;
+            }
+
+            // ✅ iPhone Safari 判定（あなたの既存ロジックを維持）
+            const ua = navigator.userAgent;
+            const isIOS =
+              /iP(hone|ad|od)/.test(ua) ||
+              (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+            const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|Android/.test(ua);
+            const isIPhoneSafari = isIOS && isSafari;
+
+            // ✅ ここがポイント：Vercel からでも Fly の API を叩く（絶対URL）
+            const res = await fetch(`${API_BASE}/api/create-checkout-session`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                amount,
+                roomId: ridSafe,
+                socketId: socket?.id || "",
+              }),
+              credentials: "include",
+            });
+
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data?.url) {
+              addMessage("system", "決済の準備に失敗しました");
+              return;
+            }
+
+            // ✅ 決済画面へ
+            if (isIPhoneSafari) {
+              // iPhone Safari は同一タブ遷移が安定
+              window.location.assign(data.url);
+            } else {
+              // PC 等は別タブ（ポップアップ）を試す
+              const payWin = window.open("about:blank", "_blank");
+              payWinRef.current = payWin;
+
+              if (!payWin) {
+                addMessage(
+                  "system",
+                  "ポップアップがブロックされました。許可して再試行してね🙏"
+                );
+                return;
+              }
+
+              payWin.location.replace(data.url);
+            }
+          } catch (e) {
+            console.error("[TIP] startTipPayment error:", e);
+            addMessage("system", "決済の開始に失敗しました（通信エラー）");
+          } finally {
+            setTipLoading(false);
+            setTipOpen(false);
+          }
+        },
+        [rid, socket, addMessage]
+      );
+
+
+      // =========================
+      // 3) request helper（Fly auto-stop 起動待ちで失敗しがちなので軽くリトライ）
+      // =========================
+      const postJsonWithRetry = async (url, payload, tries = 3) => {
+        let lastErr = null;
+
+        for (let i = 0; i < tries; i++) {
+          try {
+            const res = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+              credentials: "include",
+            });
+
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}`);
+            }
+
+            return await res.json();
+          } catch (err) {
+            lastErr = err;
+            await new Promise(r => setTimeout(r, 800 * (i + 1))); // 0.8s → 1.6s → 2.4s
+          }
+        }
+
+        throw lastErr;
+      };
+
+      // =========================
+      // 4) 実行
+      // =========================
       setTipLoading(true);
       try {
-        const res = await fetch("/api/create-checkout-session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ amount, roomId: rid, socketId: socket?.id || "" }),
-          credentials: "include",
-        });
-
-        const data = await res.json().catch(() => null);
-        if (!res.ok || !data?.url) {
-          addMessage("system", "決済の準備に失敗しました");
+        // rid が無いと決済意味がないのでブロック
+        if (!rid) {
+          addMessage("system", "roomId が無いので決済できません");
           return;
         }
 
+        const url = `${API_BASE}/api/create-checkout-session`;
+
+        let data;
+        try {
+          data = await postJsonWithRetry(
+            url,
+            { amount, roomId: rid, socketId: socket?.id || "" },
+            3
+          );
+        } catch (e) {
+          console.error("[TIP] create-checkout-session failed:", e);
+          addMessage(
+            "system",
+            `決済の準備に失敗しました（${e?.message || "unknown"}）`
+          );
+          return;
+        }
+
+        if (!data?.url) {
+          console.error("[TIP] invalid response:", data);
+          addMessage("system", "決済URLが取得できませんでした");
+          return;
+        }
+
+        // =========================
+        // 5) Stripe Checkoutへ遷移
+        // =========================
         if (isIPhoneSafari) {
+          // iPhone Safari は window.open が落ちやすいので直遷移
           window.location.assign(data.url);
         } else {
+          // PC/Androidなど：ポップアップで別窓に出す
           const payWin = window.open("about:blank", "_blank");
           payWinRef.current = payWin;
 
@@ -345,6 +486,7 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
     },
     [rid, socket, addMessage]
   );
+
 
   const voiceStatusLabel =
     voiceStatus === "idle"
