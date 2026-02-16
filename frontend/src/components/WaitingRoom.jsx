@@ -217,6 +217,4 @@ export default function WaitingRoom({ sessionInfo, onCancel, socket }) {
       </div>
     </div>
   );
-};
-
-export default WaitingRoom;
+}
