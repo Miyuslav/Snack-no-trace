@@ -88,15 +88,40 @@ const io = new Server(server, {
     pingTimeout: 120000,
   });
 
-  // Express CORS（保険）
+  // Express CORS（本番・プレビュー・ローカル）
   app.use(
     cors({
-      origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
+      origin: (origin, cb) => {
+        // curl/healthなど origin無しは許可（CORS不要）
+        if (!origin) return cb(null, true);
+
+        // 許可なら「true」ではなく「origin文字列」を返す
+        if (isAllowedOrigin(origin)) return cb(null, origin);
+
+        // 不許可
+        return cb(null, false);
+      },
       credentials: true,
       methods: ["GET", "POST", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "Authorization"],
     })
   );
-  app.options("*", cors());
+
+  // preflight も同じ設定で返す（重要）
+  app.options(
+    "*",
+    cors({
+      origin: (origin, cb) => {
+        if (!origin) return cb(null, true);
+        if (isAllowedOrigin(origin)) return cb(null, origin);
+        return cb(null, false);
+      },
+      credentials: true,
+      methods: ["GET", "POST", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "Authorization"],
+    })
+  );
+
 
 
 // =========================
