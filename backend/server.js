@@ -329,6 +329,61 @@ app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), (req,
 // 通常の JSON は webhook の後
 app.use(express.json());
 
+// health check
+app.get("/api/health", (req, res) => {
+  res.status(200).json({ ok: true, ts: Date.now() });
+});
+
+// JSONが無いと req.body が空になるので必須
+app.use(express.json());
+
+app.post("/api/create-checkout-session", async (req, res) => {
+  try {
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return res.status(400).json({ error: "STRIPE_SECRET_KEY missing" });
+    }
+
+    const { amount, roomId, socketId } = req.body || {};
+    const yen = Number(amount);
+
+    if (!Number.isFinite(yen) || yen <= 0) {
+      return res.status(400).json({ error: "invalid amount" });
+    }
+
+    const Stripe = require("stripe");
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+    // 戻り先（Vercel本番に固定したいならここを固定でもOK）
+    const origin = req.get("origin") || "http://localhost:5173";
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: "jpy",
+            unit_amount: yen,
+            product_data: { name: `Tip ¥${yen}` },
+          },
+        },
+      ],
+      success_url: `${origin}/return?tip=success&roomId=${encodeURIComponent(roomId || "")}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/return?tip=cancel&roomId=${encodeURIComponent(roomId || "")}`,
+      metadata: {
+        roomId: String(roomId || ""),
+        socketId: String(socketId || ""),
+      },
+    });
+
+    return res.json({ url: session.url });
+  } catch (e) {
+    console.error("[TIP] create-checkout-session error:", e);
+    return res.status(500).json({ error: e?.message || "server error" });
+  }
+});
+
+
 // =========================
 // CORS / Allowed origins（統一版）
 // =========================
@@ -728,9 +783,10 @@ io.on("connection", (socket) => {
 // =========================
 // Start
 // =========================
-const PORT = process.env.PORT || 4000;
+const PORT = 4000;
+
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`server on ${PORT}`);
+  console.log(`[BOOT] listening on 0.0.0.0:${PORT}`);
 });
 
 // =========================

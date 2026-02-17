@@ -42,7 +42,11 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
   const [input, setInput] = useState("");
 
   const addMessage = useCallback((from, text) => {
-    setMessages((prev) => [...prev, { id: prev.length + 1, from, text }]);
+    const id =
+      (crypto?.randomUUID && crypto.randomUUID()) ||
+      `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+    setMessages((prev) => [...prev, { id, from, text }]);
   }, []);
 
   useEffect(() => {
@@ -224,42 +228,47 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
     };
   }, [mode, destroyCall]);
 
-  // =========================
-  // Actions
-  // =========================
-  const handleSend = useCallback(() => {
-    const trimmed = input.trim();
-    if (!trimmed) return;
+    // =========================
+    // Actions
+    // =========================
+    const handleSend = useCallback(() => {
+      const trimmed = input.trim();
+      if (!trimmed) return;
 
-    addMessage("user", trimmed);
-    setInput("");
-    socket?.emit("guest.message", { text: trimmed });
-  }, [input, addMessage, socket]);
+      addMessage("user", trimmed);
+      setInput("");
+      socket?.emit("guest.message", { text: trimmed });
+    }, [input, addMessage, socket]);
 
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleSend();
-    }
-  };
- const footerRef = useRef(null);
+    // ✅ IME対策 + 安定した依存
+    const handleKeyDown = useCallback(
+      (e) => {
+        if (e.key !== "Enter") return;
+        if (e.isComposing) return; // ✅ 日本語変換中 Enter 送信防止
+        e.preventDefault();
+        handleSend();
+      },
+      [handleSend]
+    );
 
- useEffect(() => {
-   const onFocusIn = () => {
-     setTimeout(() => {
-       footerRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-     }, 50);
-   };
-   window.addEventListener("focusin", onFocusIn);
-   return () => window.removeEventListener("focusin", onFocusIn);
- }, []);
+    // ✅ refs はまとめて宣言（Hook順序事故を避ける）
+    const footerRef = useRef(null);
+    const bottomRef = useRef(null);
 
-  const bottomRef = useRef(null);
+    useEffect(() => {
+      const onFocusIn = () => {
+        setTimeout(() => {
+          footerRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+        }, 50);
+      };
+      window.addEventListener("focusin", onFocusIn);
+      return () => window.removeEventListener("focusin", onFocusIn);
+    }, []);
 
-  useEffect(() => {
-    // messages が増えたら最下部へ
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages]);
+    useEffect(() => {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }, [messages]);
+
 
 
   const handleCheers = () => {
