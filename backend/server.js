@@ -421,15 +421,23 @@ const DEV_ORIGINS = new Set([
 ]);
 
 function isAllowedOrigin(origin) {
-  if (!origin) return true; // curl/health など
+  if (!origin) return true;
 
-  // ✅ 本番（Vercel）を許可
+  // 本番（固定）
   if (FRONTEND_ORIGIN && origin === FRONTEND_ORIGIN) return true;
 
-  // ✅ ローカル開発
+  // Vercel Preview（プロジェクトのPreview全許可）
+  try {
+    const u = new URL(origin);
+    if (
+      u.hostname.endsWith(".vercel.app") &&
+      u.hostname.startsWith("snack-no-trace-frontend-")
+    ) return true;
+  } catch {}
+
   if (DEV_ORIGINS.has(origin)) return true;
 
-  // ✅ ngrok（開発だけ）
+  // ngrok
   try {
     const u = new URL(origin);
     if (
@@ -441,7 +449,6 @@ function isAllowedOrigin(origin) {
 
   return false;
 }
-
 
 // =========================
 // Socket.io handlers
