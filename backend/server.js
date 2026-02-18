@@ -19,6 +19,16 @@ const fetchFn =
   ((...args) => import("node-fetch").then(({ default: f }) => f(...args)));
 
 // =========================
+// 永続ID <-> socket.id 対応
+// =========================
+const guestIdBySocketId = new Map(); // socket.id -> guestId
+const socketIdByGuestId = new Map(); // guestId -> socket.id
+
+function getGuestIdBySocket(socketId) {
+  return guestIdBySocketId.get(socketId) || null;
+}
+
+// =========================
 // CORS / Allowed origins（★ここ1箇所に統一）
 // =========================
 const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || "").replace(/\/$/, "");
@@ -30,29 +40,36 @@ const DEV_ORIGINS = new Set([
 ]);
 
 function isAllowedOrigin(origin) {
-  if (!origin) return true; // curlなど
+  if (!origin) return true; // curl など（CORS不要）
 
-  // 本番（固定）
+  // 本番（固定URL）
   if (FRONTEND_ORIGIN && origin === FRONTEND_ORIGIN) return true;
 
-  // Vercel Production（固定URL）も許可したい場合（FRONTEND_ORIGIN未設定の保険）
+  // Vercel Production（固定URL）
   if (origin === "https://snack-no-trace-frontend.vercel.app") return true;
 
-  // Vercel preview（プロジェクトのpreviewを許可）
+  // Vercel Preview（プロジェクトの preview を許可）
   try {
     const u = new URL(origin);
-    if (u.hostname.endsWith(".vercel.app") && u.hostname.startsWith("snack-no-trace-frontend-")) {
+    if (
+      u.hostname.endsWith(".vercel.app") &&
+      u.hostname.startsWith("snack-no-trace-frontend-")
+    ) {
       return true;
     }
   } catch {}
 
-  // ローカル
+  // ローカル開発
   if (DEV_ORIGINS.has(origin)) return true;
 
-  // ngrok（開発）
+  // ngrok（開発だけ）
   try {
     const u = new URL(origin);
-    if (u.hostname.endsWith("ngrok-free.dev") || u.hostname.endsWith("ngrok.app") || u.hostname.endsWith("ngrok.io")) {
+    if (
+      u.hostname.endsWith("ngrok-free.dev") ||
+      u.hostname.endsWith("ngrok.app") ||
+      u.hostname.endsWith("ngrok.io")
+    ) {
       return true;
     }
   } catch {}
@@ -62,13 +79,11 @@ function isAllowedOrigin(origin) {
 
 const corsOptions = {
   origin: (origin, cb) => {
-    // Originなし（curl等）は許可
     if (!origin) return cb(null, true);
 
-    // ★ credentials:true のときは "*" ではなく "origin文字列" を返す必要あり
+    // ✅ credentials:true のときは "*" ではなく origin 文字列を返す
     if (isAllowedOrigin(origin)) return cb(null, origin);
 
-    // 不許可
     return cb(null, false);
   },
   credentials: true,
@@ -76,9 +91,10 @@ const corsOptions = {
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 
-// Express CORS（routesより前）
+// ✅ Express CORS（routes より前）
 app.use(cors(corsOptions));
-// preflight
+
+// ✅ preflight：絶対に cors() 単体を使わない（★ここ重要）
 app.options("*", cors(corsOptions));
 
 // =========================
@@ -92,7 +108,7 @@ console.log("[env] STRIPE_SECRET_KEY exists?", !!process.env.STRIPE_SECRET_KEY);
 if (!stripe) console.warn("[Stripe] STRIPE_SECRET_KEY missing: tipping disabled");
 
 // =========================
-// Socket.io（Expressと同じCORS判定）
+// Socket.io（Express と同じ CORS 判定）
 // =========================
 const io = new Server(server, {
   path: "/socket.io",
@@ -111,23 +127,12 @@ const io = new Server(server, {
 });
 
 // =========================
-// 永続ID <-> socket.id
-// =========================
-const guestIdBySocketId = new Map(); // socket.id -> guestId
-const socketIdByGuestId = new Map(); // guestId -> socket.id
-
-function getGuestIdBySocket(socketId) {
-  return guestIdBySocketId.get(socketId) || null;
-}
-
-// =========================
 // 状態管理
 // =========================
 let mamaSocket = null;
-
 const guests = new Map(); // socket.id -> { guestId, mood, mode, status, joinedAt, isPaying, roomId }
 let waitingOrder = []; // socket.id[]
-let activeSession = null; // { guestId, guestSocketId, roomId, startedAt, timeoutId, warningTimeoutId, graceTimeoutId, payingGraceTimeoutId, daily? }
+let activeSession = null; // { guestId, guestSocketId, roomId, startedAt, timeoutId, warningTimeoutId, graceTimeoutId, payingGraceTimeoutId, daily }
 
 const SESSION_MAX_MS = 10 * 60 * 1000;
 const WARNING_BEFORE_MS = 60 * 1000;
@@ -160,7 +165,7 @@ function isActiveGuestSocketId(socketId) {
   const sidGuestId = getGuestIdBySocket(socketId);
   if (!sidGuestId) return false;
 
-  return activeSession.guestId && activeSession.guestId === sidGuestId;
+  return !!(activeSession.guestId && activeSession.guestId === sidGuestId);
 }
 
 function endActiveSession(reason = "ended") {
@@ -171,7 +176,6 @@ function endActiveSession(reason = "ended") {
   if (activeSession.payingGraceTimeoutId) clearTimeout(activeSession.payingGraceTimeoutId);
   if (activeSession.graceTimeoutId) clearTimeout(activeSession.graceTimeoutId);
 
-  // ✅ guestId から “今の” socketId を引く（復帰対策）
   const sid =
     (activeSession.guestId && socketIdByGuestId.get(activeSession.guestId)) ||
     activeSession.guestSocketId;
@@ -193,7 +197,7 @@ function endActiveSession(reason = "ended") {
 }
 
 // =========================
-// Daily token（voice用）
+// Daily token（voice用）※必要なら中身を実装
 // =========================
 function roomNameFromUrl(roomUrl) {
   const u = new URL(roomUrl);
@@ -203,7 +207,6 @@ function roomNameFromUrl(roomUrl) {
 async function createDailyMeetingToken({ userName, isOwner }) {
   const roomUrl = process.env.DAILY_ROOM_URL;
   const apiKey = process.env.DAILY_API_KEY;
-
   if (!roomUrl || !apiKey) throw new Error("Missing DAILY_ROOM_URL or DAILY_API_KEY");
 
   const roomName = roomNameFromUrl(roomUrl);
@@ -235,38 +238,30 @@ async function createDailyMeetingToken({ userName, isOwner }) {
 async function startSessionWithGuest({ guestId, guestSocketId }) {
   if (activeSession) return;
 
-  const sid = socketIdByGuestId.get(guestId) || guestSocketId; // ✅最新
+  const sid = socketIdByGuestId.get(guestId) || guestSocketId;
   const guestInfo = guests.get(sid);
   const guestSocket = io.sockets.sockets.get(sid);
   if (!guestInfo || !guestSocket) return;
 
-  // キューから外す
   waitingOrder = waitingOrder.filter((id) => id !== sid);
 
-  // guest状態
   guestInfo.status = "active";
   guests.set(sid, guestInfo);
 
   const startedAt = Date.now();
 
-  // voice token
   let voiceInfoForGuest = null;
   let voiceInfoForMama = null;
-  let dailyPack = null;
 
+  // voice の場合だけ発行したいならここ
   if (guestInfo.mode === "voice") {
     try {
-      const g = await createDailyMeetingToken({ userName: "guest", isOwner: false });
-      const m = await createDailyMeetingToken({ userName: "mama", isOwner: true });
-
-      voiceInfoForGuest = { roomUrl: g.roomUrl, token: g.token };
-      voiceInfoForMama = { roomUrl: m.roomUrl, token: m.token };
-      dailyPack = { roomUrl: g.roomUrl, guestToken: g.token, mamaToken: m.token };
+      const gTok = await createDailyMeetingToken({ userName: "guest", isOwner: false });
+      const mTok = await createDailyMeetingToken({ userName: "mama", isOwner: true });
+      voiceInfoForGuest = { roomUrl: gTok.roomUrl, token: gTok.token };
+      voiceInfoForMama = { roomUrl: mTok.roomUrl, token: mTok.token };
     } catch (e) {
-      console.error("[Daily] token create failed:", e?.message || e);
-      // voice tokenが作れないなら text に落とす、など運用に応じて
-      guestInfo.mode = "text";
-      guests.set(sid, guestInfo);
+      console.warn("[Daily] token create failed:", e?.message || e);
     }
   }
 
@@ -287,7 +282,10 @@ async function startSessionWithGuest({ guestId, guestSocketId }) {
     warningTimeoutId,
     graceTimeoutId: null,
     payingGraceTimeoutId: null,
-    daily: dailyPack,
+    daily:
+      voiceInfoForGuest && voiceInfoForMama
+        ? { roomUrl: voiceInfoForGuest.roomUrl, guestToken: voiceInfoForGuest.token, mamaToken: voiceInfoForMama.token }
+        : null,
   };
 
   console.log("[SESSION START]", { guestSocketId: sid, startedAt });
@@ -344,7 +342,6 @@ app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), (req,
     const socketId = session?.metadata?.socketId;
     const amountTotal = session.amount_total;
 
-    // isPaying 解除（そのsocketがまだ居る場合）
     if (socketId && guests.has(socketId)) {
       const g = guests.get(socketId);
       g.isPaying = false;
@@ -360,11 +357,6 @@ app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), (req,
         kind: "tip",
         amountTotal,
       });
-    } else {
-      console.warn("⚠️ roomId missing in metadata", {
-        checkoutSessionId: session.id,
-        metadata: session.metadata,
-      });
     }
 
     if (mamaSocket) {
@@ -374,13 +366,14 @@ app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), (req,
         at: Date.now(),
       });
     }
+
     console.log("[webhook] tip completed", { roomId, socketId, amountTotal });
   }
 
   return res.json({ received: true });
 });
 
-// 通常の JSON は webhook の後
+// ✅ JSON は webhook の後
 app.use(express.json());
 
 // health
@@ -401,15 +394,12 @@ app.post("/api/create-checkout-session", async (req, res) => {
       return res.status(400).json({ error: "invalid amount" });
     }
 
-    // ✅ 戻り先は基本 FRONTEND_ORIGIN に固定（安全）
-    // previewでも戻したいなら、Originを使う。ただし許可済みのものだけ。
-    const reqOrigin = req.get("origin") || "";
-    const origin =
-      (reqOrigin && isAllowedOrigin(reqOrigin) ? reqOrigin : "") ||
-      FRONTEND_ORIGIN ||
-      "http://localhost:5173";
+    const stripeLocal = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-    const session = await stripe.checkout.sessions.create({
+    // 戻り先：Originが来るならそれ、無ければ本番固定へ
+    const origin = req.get("origin") || FRONTEND_ORIGIN || "http://localhost:5173";
+
+    const session = await stripeLocal.checkout.sessions.create({
       mode: "payment",
       line_items: [
         {
@@ -450,22 +440,16 @@ io.on("connection", (socket) => {
     mamaSocket = socket;
     console.log("Mama connected:", socket.id);
 
-    // mama は固定部屋に join
     socket.join(MAMA_ROOM_ID);
     console.log("[mama] join_room", socket.id, MAMA_ROOM_ID);
 
     broadcastQueueToMama();
 
-    // 既にセッション中なら復帰情報を送る
     if (activeSession) {
-      const sid =
-        (activeSession.guestId && socketIdByGuestId.get(activeSession.guestId)) ||
-        activeSession.guestSocketId;
-
-      const gInfo = guests.get(sid);
+      const gInfo = guests.get(activeSession.guestSocketId);
 
       socket.emit("session.started", {
-        guestSocketId: sid,
+        guestSocketId: activeSession.guestSocketId,
         mood: gInfo?.mood ?? null,
         mode: gInfo?.mode ?? null,
         roomId: activeSession.roomId || gInfo?.roomId || null,
@@ -473,19 +457,8 @@ io.on("connection", (socket) => {
         maxMs: SESSION_MAX_MS,
         resumed: true,
         ...(activeSession?.daily && gInfo?.mode === "voice"
-          ? {
-              voiceInfo: {
-                roomUrl: activeSession.daily.roomUrl,
-                token: activeSession.daily.mamaToken,
-              },
-            }
+          ? { voiceInfo: { roomUrl: activeSession.daily.roomUrl, token: activeSession.daily.mamaToken } }
           : {}),
-      });
-
-      console.log("[mama resume] sent session.started", {
-        mama: socket.id,
-        guestSocketId: sid,
-        roomId: activeSession.roomId || gInfo?.roomId || null,
       });
     }
 
@@ -494,19 +467,17 @@ io.on("connection", (socket) => {
 
       const guestId = guestIdBySocketId.get(guestSocketId);
       if (!guestId) {
-        console.warn("[accept] guestId not found for socket", { guestSocketId });
-        socket.emit("system_message", { text: "⚠️ そのお客さんは既に退店しました（復帰情報なし）。" });
+        socket.emit("system_message", { text: "⚠️ そのお客さんは既に退店しました。" });
         broadcastQueueToMama();
         return;
       }
 
       const latestSocketId = socketIdByGuestId.get(guestId);
-      const gSocket = io.sockets.sockets.get(latestSocketId);
-      const gInfo = guests.get(latestSocketId);
+      const guestSocket = io.sockets.sockets.get(latestSocketId);
+      const guestInfo = guests.get(latestSocketId);
 
-      if (!gSocket || !gInfo) {
-        console.warn("[accept] guest not found", { guestId, latestSocketId });
-        socket.emit("system_message", { text: "⚠️ そのお客さんは既に退店しました。キューを更新します。" });
+      if (!guestSocket || !guestInfo) {
+        socket.emit("system_message", { text: "⚠️ そのお客さんは既に退店しました。キュー更新します。" });
         broadcastQueueToMama();
         return;
       }
@@ -516,15 +487,9 @@ io.on("connection", (socket) => {
     });
 
     socket.on("mama.message", ({ text } = {}) => {
-      if (!activeSession) return;
-      if (!text) return;
-
-      const sid =
-        (activeSession.guestId && socketIdByGuestId.get(activeSession.guestId)) ||
-        activeSession.guestSocketId;
-
-      const gSocket = io.sockets.sockets.get(sid);
-      if (gSocket) gSocket.emit("chat.message", { from: "mama", text });
+      if (!activeSession || !text) return;
+      const guestSocket = io.sockets.sockets.get(activeSession.guestSocketId);
+      if (guestSocket) guestSocket.emit("chat.message", { from: "mama", text });
     });
 
     socket.on("mama.endSession", () => {
@@ -552,7 +517,7 @@ io.on("connection", (socket) => {
     return;
   }
 
-  // ===== guest =====
+  // ===== guest init =====
   guests.set(socket.id, {
     guestId: null,
     mood: null,
@@ -563,21 +528,20 @@ io.on("connection", (socket) => {
     roomId: null,
   });
 
-  socket.on("join_room", ({ roomId } = {}) => {
-    if (!roomId) return;
+  socket.on("join_room", ({ roomId }) => {
     socket.join(roomId);
     console.log("[join_room]", socket.id, roomId);
 
     const info = guests.get(socket.id) || {};
     guests.set(socket.id, { ...info, roomId });
 
-    // 復帰：activeSessionの部屋に戻ってきた
     if (activeSession?.roomId && roomId === activeSession.roomId) {
       const oldId = activeSession.guestSocketId;
       if (oldId !== socket.id) {
         activeSession.guestSocketId = socket.id;
 
         const gInfo = guests.get(socket.id);
+
         socket.emit("session.started", {
           guestSocketId: socket.id,
           mood: gInfo?.mood ?? null,
@@ -587,12 +551,7 @@ io.on("connection", (socket) => {
           maxMs: SESSION_MAX_MS,
           resumed: true,
           ...(activeSession.daily && gInfo?.mode === "voice"
-            ? {
-                voiceInfo: {
-                  roomUrl: activeSession.daily.roomUrl,
-                  token: activeSession.daily.guestToken,
-                },
-              }
+            ? { voiceInfo: { roomUrl: activeSession.daily.roomUrl, token: activeSession.daily.guestToken } }
             : {}),
         });
 
@@ -622,21 +581,10 @@ io.on("connection", (socket) => {
 
     console.log("[GUEST REGISTER]", socket.id, { guestId, mood, mode });
 
-    if (mamaSocket) {
-      mamaSocket.emit("mama.notify", {
-        socketId: socket.id,
-        mood,
-        mode,
-        joinedAt: Date.now(),
-      });
-    }
-
+    if (mamaSocket) mamaSocket.emit("mama.notify", { socketId: socket.id, mood, mode, joinedAt: Date.now() });
     broadcastQueueToMama();
 
-    socket.emit("queue.position", {
-      position: waitingOrder.indexOf(socket.id) + 1,
-      size: waitingOrder.length,
-    });
+    socket.emit("queue.position", { position: waitingOrder.indexOf(socket.id) + 1, size: waitingOrder.length });
   });
 
   socket.on("guest.leave", () => {
@@ -648,12 +596,9 @@ io.on("connection", (socket) => {
     waitingOrder = waitingOrder.filter((id) => id !== socket.id);
 
     if (activeSession && isActiveGuestSocketId(socket.id)) {
-      // 支払い中は即終了しない
       if (guestInfo.isPaying) {
         if (!activeSession.payingGraceTimeoutId) {
-          activeSession.payingGraceTimeoutId = setTimeout(() => {
-            endActiveSession("paying_disconnect_timeout");
-          }, 2 * 60 * 1000);
+          activeSession.payingGraceTimeoutId = setTimeout(() => endActiveSession("paying_disconnect_timeout"), 2 * 60 * 1000);
         }
         broadcastQueueToMama();
         return;
@@ -672,16 +617,7 @@ io.on("connection", (socket) => {
   socket.on("guest.message", ({ text } = {}) => {
     if (!text) return;
 
-    if (!isActiveGuestSocketId(socket.id)) {
-      console.log("[guest.message] ignored (not active)", {
-        socketId: socket.id,
-        socketGuestId: getGuestIdBySocket(socket.id),
-        activeGuestSocketId: activeSession?.guestSocketId,
-        activeGuestId: activeSession?.guestId,
-      });
-      return;
-    }
-
+    if (!isActiveGuestSocketId(socket.id)) return;
     if (mamaSocket) mamaSocket.emit("chat.message", { from: "guest", text });
   });
 
@@ -705,26 +641,19 @@ io.on("connection", (socket) => {
     waitingOrder = waitingOrder.filter((id) => id !== socket.id);
 
     if (activeSession && isActiveGuestSocketId(socket.id)) {
-      // 支払い中
       if (guestInfo.isPaying) {
         if (!activeSession.payingGraceTimeoutId) {
-          activeSession.payingGraceTimeoutId = setTimeout(() => {
-            endActiveSession("paying_disconnect_timeout");
-          }, 2 * 60 * 1000);
+          activeSession.payingGraceTimeoutId = setTimeout(() => endActiveSession("paying_disconnect_timeout"), 2 * 60 * 1000);
         }
         return;
       }
 
-      // 通常 disconnect は猶予
       if (!activeSession.graceTimeoutId) {
-        activeSession.graceTimeoutId = setTimeout(() => {
-          endActiveSession("guest_disconnect_timeout");
-        }, 10 * 1000);
+        activeSession.graceTimeoutId = setTimeout(() => endActiveSession("guest_disconnect_timeout"), 10 * 1000);
       }
       return;
     }
 
-    // セッション外：支払い中なら少し猶予
     if (guestInfo.isPaying) {
       setTimeout(() => {
         if (!io.sockets.sockets.get(socket.id)) {
@@ -743,7 +672,8 @@ io.on("connection", (socket) => {
 // =========================
 // Start
 // =========================
-const PORT = process.env.PORT || 4000;
+const PORT = Number(process.env.PORT || 4000);
+
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[BOOT] listening on 0.0.0.0:${PORT}`);
 });
