@@ -389,6 +389,23 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
           addMessage("system", "決済URLが取得できませんでした");
           return;
         }
+        // iPhone Safari はポップアップ禁止。必ず同タブ遷移にする
+        if (isIPhoneSafari) {
+          setTipOpen(false); // モーダル開いてるなら閉じる（任意）
+          addMessage("system", "決済画面に移動します…");
+          window.location.href = data.url; // ← これが確実
+          return;
+        }
+
+        // iPhone以外：新規タブで開く（about:blank 先openは使わない）
+        const win = window.open(data.url, "_blank", "noopener,noreferrer");
+        if (!win) {
+          addMessage(
+            "system",
+            "ポップアップがブロックされました。ブラウザ設定で許可して再試行してね🙏"
+          );
+          return;
+        }
 
         // 3) Stripe Checkoutへ遷移
         if (isIPhoneSafari) {
