@@ -227,7 +227,7 @@ async function createDailyMeetingToken({ userName, isOwner }) {
     }),
   });
 
-  const data = await r.json();
+  const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`Daily token error: ${r.status} ${JSON.stringify(data)}`);
   return { token: data.token, roomUrl };
 }
@@ -252,18 +252,34 @@ async function startSessionWithGuest({ guestId, guestSocketId }) {
 
   let voiceInfoForGuest = null;
   let voiceInfoForMama = null;
+  let voiceError = null;
 
   // voice の場合だけ発行したいならここ
   if (guestInfo.mode === "voice") {
+    console.log("[Daily] start token create", {
+        guestSocketId: sid,
+        roomUrlSet: !!process.env.DAILY_ROOM_URL,
+        apiKeySet: !!process.env.DAILY_API_KEY,
+        roomUrl: process.env.DAILY_ROOM_URL || "(missing)",
+      });
+
     try {
       const gTok = await createDailyMeetingToken({ userName: "guest", isOwner: false });
       const mTok = await createDailyMeetingToken({ userName: "mama", isOwner: true });
       voiceInfoForGuest = { roomUrl: gTok.roomUrl, token: gTok.token };
       voiceInfoForMama = { roomUrl: mTok.roomUrl, token: mTok.token };
+      console.log("[Daily] token created OK", {
+            roomUrl: voiceInfoForGuest.roomUrl,
+            guestTokenLen: voiceInfoForGuest.token?.length,
+            mamaTokenLen: voiceInfoForMama.token?.length,
+          });
     } catch (e) {
-      console.warn("[Daily] token create failed:", e?.message || e);
+      console.warn("[Daily] token create failed:", e);
+      console.warn("[Daily] env", {
+        DAILY_ROOM_URL: process.env.DAILY_ROOM_URL ? "(set)" : "(missing)",
+        DAILY_API_KEY: process.env.DAILY_API_KEY ? "(set)" : "(missing)",
+      });
     }
-  }
 
   const timeoutId = setTimeout(() => endActiveSession("timeout"), SESSION_MAX_MS);
 
@@ -289,6 +305,19 @@ async function startSessionWithGuest({ guestId, guestSocketId }) {
   };
 
   console.log("[SESSION START]", { guestSocketId: sid, startedAt });
+
+  if (guestInfo.mode === "voice") {
+    try {
+      const gTok = await createDailyMeetingToken({ userName: "guest", isOwner: false });
+      const mTok = await createDailyMeetingToken({ userName: "mama", isOwner: true });
+      voiceInfoForGuest = { roomUrl: gTok.roomUrl, token: gTok.token };
+      voiceInfoForMama  = { roomUrl: mTok.roomUrl, token: mTok.token };
+    } catch (e) {
+      voiceError = e?.message || "Daily token create failed";
+      console.warn("[Daily] token create failed:", e);
+    }
+  }
+
 
   guestSocket.emit("session.started", {
     guestSocketId: sid,
