@@ -448,7 +448,12 @@ io.on("connection", (socket) => {
     if (activeSession) {
       const gInfo = guests.get(activeSession.guestSocketId);
 
-      socket.emit("session.started", {
+      console.log("[VOICE DEBUG] mode=", gInfo?.mode,
+        "hasDaily=", !!activeSession?.daily,
+        "daily=", activeSession?.daily);
+
+
+      guestSocket.emit("session.started", {
         guestSocketId: activeSession.guestSocketId,
         mood: gInfo?.mood ?? null,
         mode: gInfo?.mode ?? null,
@@ -457,7 +462,7 @@ io.on("connection", (socket) => {
         maxMs: SESSION_MAX_MS,
         resumed: true,
         ...(activeSession?.daily && gInfo?.mode === "voice"
-          ? { voiceInfo: { roomUrl: activeSession.daily.roomUrl, token: activeSession.daily.mamaToken } }
+          ? { voiceInfo: { roomUrl: activeSession.daily.roomUrl, token: activeSession.daily.guestToken } }
           : {}),
       });
     }
