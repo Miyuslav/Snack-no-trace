@@ -8,7 +8,7 @@ export default function WaitingRoom({ sessionInfo, onCancel, socket }) {
     if (typeof window === "undefined" || typeof Audio === "undefined") return;
     try {
       if (!evapSoundRef.current) {
-        const a = new Audio("/door_out.mp3");
+        const a = new Audio("/cat.mp3");
         a.preload = "auto";
         a.volume = 0.2;
         evapSoundRef.current = a;

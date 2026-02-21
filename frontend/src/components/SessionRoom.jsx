@@ -105,6 +105,46 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
       const call = Daily.createCallObject({ videoSource: false });
       callRef.current = call;
 
+      // ===== Debug listeners =====
+      const dumpLocal = () => {
+        try {
+          const p = call.participants?.() || {};
+          const me = p.local || {};
+          console.log("[Daily] localAudio()", call.localAudio?.());
+          console.log("[Daily] local participant", {
+            audio: me.audio,
+            local: me.local,
+            audioTrackState: me.tracks?.audio?.state,
+            audioSubscribed: me.tracks?.audio?.subscribed,
+          });
+        } catch (e) {
+          console.log("[Daily] dumpLocal failed", e);
+        }
+      };
+
+      call.on("joining-meeting", () => console.log("[Daily] joining-meeting"));
+      call.on("joined-meeting", () => {
+        console.log("[Daily] joined-meeting");
+        dumpLocal();
+      });
+      call.on("participant-joined", (e) => console.log("[Daily] participant-joined", e?.participant?.user_id));
+      call.on("participant-updated", (e) => {
+        const pt = e?.participant;
+        if (!pt) return;
+        console.log("[Daily] participant-updated", pt.user_id, {
+          audio: pt.audio,
+          audioTrackState: pt.tracks?.audio?.state,
+          audioSubscribed: pt.tracks?.audio?.subscribed,
+        });
+      });
+      call.on("track-started", (e) => console.log("[Daily] track-started", e?.participant?.user_id, e?.track?.kind));
+      call.on("track-stopped", (e) => console.log("[Daily] track-stopped", e?.participant?.user_id, e?.track?.kind));
+
+      // audio level events（startLocalAudioLevelObserver を呼んだら流れてくる）
+      call.on("local-audio-level", (e) => console.log("[Daily] local-audio-level", e?.audioLevel));
+      call.on("remote-participants-audio-level", (e) => console.log("[Daily] remote-audio-level", e));
+
+
       call.on("joined-meeting", () => {
         setVoiceStatus("joined");
         try {
@@ -121,6 +161,8 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
       await call.join({
         url: voiceInfo.roomUrl,
         token: voiceInfo.token || undefined,
+        startAudioOff: false,
+        startVideoOff: true,
         videoSource: false,
       });
 
@@ -154,7 +196,7 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
   }, [voiceInfo, voiceStatus, destroyCall, addMessage]);
 
   const leaveVoice = useCallback(async () => {
-    addMessage("system", "🔇 音声ルームから退出しました");
+    addMessage("system", "音声ルームから退出しました");
     await destroyCall();
   }, [destroyCall, addMessage]);
 
@@ -279,7 +321,7 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
       cheersSoundRef.current?.play?.();
     } catch {}
 
-    const userText = "🍸 乾杯！";
+    const userText = "🍻 乾杯！";
     addMessage("user", userText);
     socket?.emit("guest.message", { text: userText });
 
@@ -288,7 +330,7 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
         if (cheersSoundRef.current) cheersSoundRef.current.currentTime = 0;
         cheersSoundRef.current?.play?.();
       } catch {}
-      addMessage("mama", "🍸 乾杯！");
+      addMessage("mama", "🍻乾杯！");
       setTipEffect(true);
       window.setTimeout(() => setTipEffect(false), 900);
     }, 800);
@@ -348,7 +390,7 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
   const startTipPayment = useCallback(
     async (amount) => {
       // 0) 演出ログ
-      const text = `💸 チップ ¥${amount} をはずむ。`;
+      const text = `チップ ¥${amount} をはずむ。`;
       addMessage("user", text);
       socket?.emit("guest.message", { text });
       socket?.emit("guest.tip", { amount });
