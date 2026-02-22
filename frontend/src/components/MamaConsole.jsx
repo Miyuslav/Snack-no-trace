@@ -140,6 +140,9 @@ export default function MamaConsole() {
       }
       if (voiceStatus === "joining" || voiceStatus === "joined") return;
 
+      // ✅ 既存が残ってたら掃除（安全）
+      await destroyCall();
+
       try {
         setVoiceStatus("joining");
 
@@ -147,41 +150,112 @@ export default function MamaConsole() {
         const call = Daily.createCallObject({ videoSource: false });
         callRef.current = call;
 
-        call.on("joined-meeting", (e) => {
-          console.log("[Daily] joined-meeting", e);
-          setVoiceStatus("joined");
+        // ====== 追加：観測用ヘルパ ======
+        const logLocalTrack = () => {
           try {
-            call.setLocalAudio(true);
-          } catch {}
+            const t = call.participants?.()?.local?.audioTrack;
+            console.log("[Mama] audioTrack states", {
+              enabled: t?.enabled,
+              muted: t?.muted,
+              readyState: t?.readyState,
+              settings: t?.getSettings?.(),
+            });
+          } catch (e) {
+            console.log("[Mama] logLocalTrack failed", e);
+          }
+        };
+
+        const logParticipants = () => {
+          try {
+            const p = call.participants?.() || {};
+            const keys = Object.keys(p);
+            console.log("[Mama] participants keys", keys);
+            for (const k of keys) {
+              const pt = p[k];
+              console.log("[Mama] pt", k, {
+                local: pt?.local,
+                user_id: pt?.user_id,
+                user_name: pt?.user_name,
+                audio: pt?.audio,
+                audioTrackState: pt?.tracks?.audio?.state,
+                audioSubscribed: pt?.tracks?.audio?.subscribed,
+              });
+            }
+          } catch (e) {
+            console.log("[Mama] logParticipants failed", e);
+          }
+        };
+
+        // ====== イベント ======
+        call.on("joining-meeting", () => console.log("[Daily][Mama] joining-meeting"));
+
+        call.on("joined-meeting", async (e) => {
+          console.log("[Daily][Mama] joined-meeting", e);
+          setVoiceStatus("joined");
+
+          // ✅ 送信ON
+          try { await call.setLocalAudio(true); } catch {}
+          try { await call.setLocalVideo(false); } catch {}
+
+          // ✅ 観測開始（ここが「どこに入れる？」の答え）
+          try {
+            call.startLocalAudioLevelObserver(200);
+            call.on("local-audio-level", (ev) => {
+              console.log("[Mama] local-audio-level", ev?.audioLevel);
+            });
+          } catch (err) {
+            console.log("[Mama] startLocalAudioLevelObserver failed", err);
+          }
+
+          logLocalTrack();
+          logParticipants();
+
+          addMessage("system", "🔊 音声ルームに入りました（ママ）");
+
+          // ✅ 無音復旧トグル（喋っても 0 が続く時に効く）
+          setTimeout(async () => {
+            try {
+              // 3秒後にもう一度状態を出す
+              logLocalTrack();
+              logParticipants();
+
+              // ここで “強制トグル”
+              await call.setLocalAudio(false);
+              await new Promise((r) => setTimeout(r, 200));
+              await call.setLocalAudio(true);
+              console.log("[Mama] toggled local audio. localAudio()=", call.localAudio?.());
+            } catch (e2) {
+              console.log("[Mama] toggle local audio failed", e2);
+            }
+          }, 3000);
         });
 
         call.on("left-meeting", (e) => {
-          console.log("[Daily] left-meeting", e);
-          setVoiceStatus("idle");
+          console.log("[Daily][Mama] left-meeting", e);
+          destroyCall();
         });
 
         call.on("error", (e) => {
-          console.warn("[Daily error]", e);
+          console.warn("[Daily error][Mama]", e);
           setVoiceStatus("failed");
           setVoiceErr(e?.errorMsg || e?.message || "Daily error");
+          destroyCall();
         });
 
+        // ====== join ======
         await call.join({
           url: payload.roomUrl,
           token: payload.token || undefined,
           videoSource: false,
+          startAudioOff: false,
+          startVideoOff: true,
         });
 
-        try {
-          await call.setLocalAudio(true);
-        } catch {}
-        try {
-          await call.startLocalAudio?.();
-        } catch {}
+        // 念押し
+        try { await call.setLocalAudio(true); } catch {}
 
-        addMessage("system", "🔊 音声ルームに入りました（ママ）");
       } catch (e) {
-        console.warn("[joinVoice] failed", e);
+        console.warn("[joinVoice][Mama] failed", e);
         setVoiceStatus("failed");
         setVoiceErr(e?.message || "join failed");
         await destroyCall();
@@ -190,6 +264,7 @@ export default function MamaConsole() {
     },
     [voiceInfo, voiceStatus, destroyCall, addMessage]
   );
+
 
   const requestVoiceJoin = useCallback(() => {
     setVoiceErr("");

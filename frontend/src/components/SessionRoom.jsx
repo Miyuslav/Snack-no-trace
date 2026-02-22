@@ -98,6 +98,9 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
     }
     if (voiceStatus === "joining" || voiceStatus === "joined") return;
 
+    // 既存 call が残ってたら掃除してから
+    await destroyCall();
+
     try {
       setVoiceStatus("joining");
 
@@ -105,7 +108,6 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
       const call = Daily.createCallObject({ videoSource: false });
       callRef.current = call;
 
-      // ===== Debug listeners =====
       const dumpLocal = () => {
         try {
           const p = call.participants?.() || {};
@@ -123,10 +125,17 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
       };
 
       call.on("joining-meeting", () => console.log("[Daily] joining-meeting"));
-      call.on("joined-meeting", () => {
+
+      // ✅ joined-meeting は1回にまとめる
+      call.on("joined-meeting", async () => {
         console.log("[Daily] joined-meeting");
         dumpLocal();
+        setVoiceStatus("joined");
+        try { await call.setLocalAudio(true); } catch {}
+        try { await call.setLocalVideo(false); } catch {}
+        addMessage("system", "🔊 音声ルームに入りました");
       });
+
       call.on("participant-joined", (e) => console.log("[Daily] participant-joined", e?.participant?.user_id));
       call.on("participant-updated", (e) => {
         const pt = e?.participant;
@@ -137,25 +146,22 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
           audioSubscribed: pt.tracks?.audio?.subscribed,
         });
       });
+
       call.on("track-started", (e) => console.log("[Daily] track-started", e?.participant?.user_id, e?.track?.kind));
       call.on("track-stopped", (e) => console.log("[Daily] track-stopped", e?.participant?.user_id, e?.track?.kind));
 
-      // audio level events（startLocalAudioLevelObserver を呼んだら流れてくる）
       call.on("local-audio-level", (e) => console.log("[Daily] local-audio-level", e?.audioLevel));
       call.on("remote-participants-audio-level", (e) => console.log("[Daily] remote-audio-level", e));
 
-
-      call.on("joined-meeting", () => {
-        setVoiceStatus("joined");
-        try {
-          call.setLocalAudio(true);
-        } catch {}
+      // ✅ left/error でも完全掃除
+      call.on("left-meeting", () => {
+        destroyCall();
       });
 
-      call.on("left-meeting", () => setVoiceStatus("idle"));
       call.on("error", (e) => {
         setVoiceStatus("failed");
         setVoiceErr(e?.errorMsg || e?.message || "Daily error");
+        destroyCall();
       });
 
       await call.join({
@@ -166,14 +172,7 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
         videoSource: false,
       });
 
-      try {
-        await call.setLocalAudio(true);
-      } catch {}
-      try {
-        await call.setLocalVideo(false);
-      } catch {}
-
-      // デバッグ観測（必要なら）
+      // observer は joined 後に呼ばれる方が安全（join直後に失敗する端末がある）
       try {
         call.startLocalAudioLevelObserver(200);
         call.startRemoteParticipantsAudioLevelObserver(200);
@@ -181,12 +180,9 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
 
       debugIntervalRef.current = window.setInterval(() => {
         try {
-          // eslint-disable-next-line no-console
           console.log("[Daily] participants", Object.keys(call.participants?.() || {}));
         } catch {}
       }, 1500);
-
-      addMessage("system", "🔊 音声ルームに入りました");
     } catch (e) {
       setVoiceStatus("failed");
       setVoiceErr(e?.message || "join failed");
@@ -195,23 +191,6 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
     }
   }, [voiceInfo, voiceStatus, destroyCall, addMessage]);
 
-  const leaveVoice = useCallback(async () => {
-    addMessage("system", "音声ルームから退出しました");
-    await destroyCall();
-  }, [destroyCall, addMessage]);
-
-  // voiceInfoが来たら自動で一回だけ join
-  const autoJoinedRef = useRef(false);
-  useEffect(() => {
-    if (!isVoice) {
-      autoJoinedRef.current = false;
-      return;
-    }
-    if (!voiceInfo?.roomUrl) return;
-    if (autoJoinedRef.current) return;
-    autoJoinedRef.current = true;
-    joinVoice();
-  }, [isVoice, voiceInfo?.roomUrl, joinVoice]);
 
   // =========================
   // Sounds init
@@ -569,7 +548,7 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
                       <button
                         type="button"
                         onClick={joinVoice}
-                        disabled={voiceStatus === "joining" || voiceStatus === "joined" || !voiceInfo}
+                        disabled={voiceStatus === "joining" || voiceStatus === "joined" || !voiceInfo?.roomUrl}
                         className="px-3 py-2 rounded-full text-[12px] font-semibold bg-snack-neon-blue text-black disabled:opacity-40"
                       >
                         {voiceStatus === "joined" ? "通話中" : "再接続"}
