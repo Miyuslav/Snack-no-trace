@@ -189,28 +189,49 @@ export default function MamaConsole() {
         // ====== イベント ======
         call.on("joining-meeting", () => console.log("[Daily][Mama] joining-meeting"));
 
-        call.on("joined-meeting", async (e) => {
-          console.log("[Daily][Mama] joined-meeting", e);
+        call.on("joined-meeting", async () => {
+          console.log("[Daily][Mama] joined-meeting");
           setVoiceStatus("joined");
 
-          // ✅ 送信ON
-          try { await call.setLocalAudio(true); } catch {}
-          try { await call.setLocalVideo(false); } catch {}
+          // ① まず確実に audio ON を試す（複数回）
+          const ensureLocalAudioOn = async () => {
+            for (let i = 0; i < 3; i++) {
+              try {
+                await call.setLocalAudio(true);
+              } catch {}
+              await new Promise((r) => setTimeout(r, 200));
+              const on = call.localAudio?.();
+              console.log("[Mama] localAudio() after set", on);
+              if (on === true) return true;
+            }
+            return false;
+          };
 
-          // ✅ 観測開始（ここが「どこに入れる？」の答え）
-          try {
-            call.startLocalAudioLevelObserver(200);
-            call.on("local-audio-level", (ev) => {
-              console.log("[Mama] local-audio-level", ev?.audioLevel);
-            });
-          } catch (err) {
-            console.log("[Mama] startLocalAudioLevelObserver failed", err);
+          const ok = await ensureLocalAudioOn();
+          if (!ok) {
+            console.warn("[Mama] localAudio could not be enabled");
+            setVoiceErr("マイクが有効化できませんでした。ブラウザのマイク許可/入力デバイスを確認してね");
           }
 
-          logLocalTrack();
-          logParticipants();
+          // ② 観測（listenerは一回だけ）
+          try {
+            if (!call.__localLevelHooked) {
+              call.__localLevelHooked = true;
+              call.on("local-audio-level", (ev) => {
+                // evが数値じゃない形で来る場合もあるので保険
+                console.log("[Mama] local-audio-level", ev?.audioLevel ?? ev);
+              });
+            }
+            if (typeof call.startLocalAudioLevelObserver === "function") {
+              call.startLocalAudioLevelObserver(200);
+            }
+          } catch (e) {
+            console.log("[Mama] audio level observer failed", e);
+          }
 
           addMessage("system", "🔊 音声ルームに入りました（ママ）");
+        });
+
 
           // ✅ 無音復旧トグル（喋っても 0 が続く時に効く）
           setTimeout(async () => {

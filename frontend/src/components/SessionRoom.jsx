@@ -191,6 +191,19 @@ export default function SessionRoom({ sessionInfo, socket, onLeave }) {
     }
   }, [voiceInfo, voiceStatus, destroyCall, addMessage]);
 
+  const forceSubscribeRemoteAudio = () => {
+    const p = call.participants?.() || {};
+    for (const id of Object.keys(p)) {
+      if (p[id]?.local) continue;
+      try {
+        call.updateParticipant(id, { setSubscribedTracks: { audio: true, video: false } });
+        console.log("[Guest] force subscribed", id);
+      } catch {}
+    }
+  };
+
+  call.on("participant-joined", forceSubscribeRemoteAudio);
+  call.on("participant-updated", forceSubscribeRemoteAudio);
 
   // =========================
   // Sounds init
