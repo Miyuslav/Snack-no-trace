@@ -193,7 +193,7 @@ export default function MamaConsole() {
           console.log("[Daily][Mama] joined-meeting");
           setVoiceStatus("joined");
 
-          // ① まず確実に audio ON を試す（複数回）
+          // ① audio ON を確実にする
           const ensureLocalAudioOn = async () => {
             for (let i = 0; i < 3; i++) {
               try {
@@ -213,12 +213,11 @@ export default function MamaConsole() {
             setVoiceErr("マイクが有効化できませんでした。ブラウザのマイク許可/入力デバイスを確認してね");
           }
 
-          // ② 観測（listenerは一回だけ）
+          // ② local audio level 観測（1回だけ登録）
           try {
             if (!call.__localLevelHooked) {
               call.__localLevelHooked = true;
               call.on("local-audio-level", (ev) => {
-                // evが数値じゃない形で来る場合もあるので保険
                 console.log("[Mama] local-audio-level", ev?.audioLevel ?? ev);
               });
             }
@@ -230,23 +229,16 @@ export default function MamaConsole() {
           }
 
           addMessage("system", "🔊 音声ルームに入りました（ママ）");
-        });
 
-
-          // ✅ 無音復旧トグル（喋っても 0 が続く時に効く）
+          // ③ 3秒後に保険トグル（必要なら）
           setTimeout(async () => {
             try {
-              // 3秒後にもう一度状態を出す
-              logLocalTrack();
-              logParticipants();
-
-              // ここで “強制トグル”
               await call.setLocalAudio(false);
               await new Promise((r) => setTimeout(r, 200));
               await call.setLocalAudio(true);
               console.log("[Mama] toggled local audio. localAudio()=", call.localAudio?.());
-            } catch (e2) {
-              console.log("[Mama] toggle local audio failed", e2);
+            } catch (e) {
+              console.log("[Mama] toggle local audio failed", e);
             }
           }, 3000);
         });
